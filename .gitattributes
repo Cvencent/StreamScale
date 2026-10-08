@@ -1,0 +1,20 @@
+# Normalise line endings so a clone behaves the same on every platform.
+#
+# This matters here: cmd.exe misparses .bat files that use bare LF, and
+# install/setup.py rewrites the template into a launcher. Without this,
+# a Linux clone would produce a broken .bat.
+
+# Default: let Git normalise to LF in the repo, native on checkout.
+* text=auto eol=lf
+
+# Windows-only files must keep CRLF in the working tree.
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# Shell scripts must stay LF, even on Windows.
+*.sh    text eol=lf
+
+# Binary-ish assets
+*.png   binary
+*.ico   binary
+*.zip   binary

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "streamscale"
+version = "0.1.0"
+description = "Per-game UI scaling for Sunshine/Moonlight streaming"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["sunshine", "moonlight", "game-streaming", "handheld", "ui-scaling"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment",
+]
+
+[project.urls]
+Homepage = "https://github.com/Cvencent/StreamScale"
+Repository = "https://github.com/Cvencent/StreamScale"
+Issues = "https://github.com/Cvencent/StreamScale/issues"
+
+[project.scripts]
+streamscale = "streamscale.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

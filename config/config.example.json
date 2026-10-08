@@ -1,0 +1,14 @@
+{
+  "_comment": "Example StreamScale config. Copy to %APPDATA%/StreamScale/config.json and edit.",
+  "enabled": true,
+  "excluded_apps": [
+    "Desktop"
+  ],
+  "max_client_width": 1600,
+  "state_dir": "",
+  "clients": {
+    "X35S": {
+      "brotato_font_size": 2.0
+    }
+  }
+}
