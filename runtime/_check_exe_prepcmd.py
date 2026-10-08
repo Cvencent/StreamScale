@@ -104,6 +104,13 @@ def main() -> int:
     env = dict(os.environ)
     env["LOCALAPPDATA"] = str(tmp / "local")
     env["APPDATA"] = str(tmp / "appdata")
+    # The tray tails this to decide a stream has begun. Left pointing at the
+    # real file, a launched copy applies profiles for real -- which once changed
+    # the user's game settings outside a stream.
+    sunshine_log = Path(tmp) / "sunshine.log"
+    sunshine_log.write_text("", encoding="utf-8")
+    env["STREAMSCALE_SUNSHINE_LOG"] = str(sunshine_log)
+    env["STREAMSCALE_LOG_DIR"] = str(Path(tmp) / "local" / "StreamScale")
     env["SUNSHINE_APP_NAME"] = "Brotato"
     env["SUNSHINE_CLIENT_NAME"] = "X35S"
     env["SUNSHINE_CLIENT_WIDTH"] = "1280"

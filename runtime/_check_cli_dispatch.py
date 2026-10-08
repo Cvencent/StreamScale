@@ -58,6 +58,10 @@ os.environ["SUNSHINE_CLIENT_NAME"] = "X35S"
 os.environ["SUNSHINE_CLIENT_WIDTH"] = "1280"
 os.environ["SUNSHINE_CLIENT_HEIGHT"] = "960"
 os.environ["STREAMSCALE_GAME_DIR"] = r"{gamedir}"
+# Keep the tray away from the real Sunshine log, so a launched copy
+# cannot decide a stream is running and apply profiles for real.
+os.environ["STREAMSCALE_SUNSHINE_LOG"] = r"{sunshinelog}"
+os.environ["STREAMSCALE_LOG_DIR"] = r"{logdir}"
 sys.path.insert(0, r"{runtime}")
 sys.path.insert(0, r"{src}")
 import tray_app
@@ -96,6 +100,8 @@ def run_cli(extra_args: list, localappdata: Path) -> str:
         _child_script.write_text(
             CHILD.format(localappdata=str(localappdata), appdata=str(appdata),
                          gamedir=str(gamedir),
+                         sunshinelog=str(localappdata / "sunshine.log"),
+                         logdir=str(localappdata / "StreamScale"),
                          runtime=str(HERE), src=str(PROJECT / "src")),
             encoding="utf-8")
         global _game_settings
