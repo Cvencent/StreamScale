@@ -1,5 +1,7 @@
 # StreamScale
 
+**English** | [简体中文](README.zh-CN.md)
+
 Per-game UI scaling automation for Sunshine + Moonlight streaming.
 
 Stream a PC game to a handheld and the UI becomes unreadable. A HUD laid
@@ -104,6 +106,8 @@ To override, create `%APPDATA%\StreamScale\config.json`:
 Adding a game means adding a module under `src/streamscale/games/` and one
 line in `registry.py`. The base class handles atomic writes, backups and
 dry-run, so an adapter only describes *what* to change.
+
+See [docs/adding-a-game.md](docs/adding-a-game.md) for the full guide.
 
 ## Safety
 
