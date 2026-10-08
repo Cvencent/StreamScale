@@ -35,7 +35,7 @@ import traceback
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.1"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -815,6 +815,10 @@ def record_install_path(exe: Path | None = None) -> None:
     on: it sees only itself, concludes there is no installation, and does
     nothing. The autostart entry is one source of truth but exists only if
     the user enabled it, so a dedicated record covers the rest.
+
+    Both the executable and its containing folder are stored. The folder is
+    what an upgrade actually replaces in an onedir layout, and it survives a
+    build that moves the exe to a different depth.
     """
     import json
     target = exe or (Path(sys.executable).resolve()
@@ -824,7 +828,8 @@ def record_install_path(exe: Path | None = None) -> None:
     try:
         path = _install_record_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"exe": str(target)}, indent=2),
+        path.write_text(json.dumps({"exe": str(target),
+                                    "folder": str(target.parent)}, indent=2),
                         encoding="utf-8")
     except OSError:
         pass
@@ -955,7 +960,13 @@ def maybe_self_update() -> int | None:
 
     log(f"upgrading {installed} from {old_version or 'unknown'} to {new_version}")
 
-    pids = updater.running_instances(installed)
+    # Match on the install folder rather than one exact exe path: in onedir
+    # the running process lives inside it, and the layout may gain a level.
+    # The name comes from the installed copy, not from this process, because
+    # an upgrade runs from elsewhere and must find the *installed* tray.
+    pids = updater.running_from_root(installed.parent, installed.name)
+    if not pids:
+        pids = updater.running_instances(installed)
     if pids:
         log(f"asking the running instance to exit (pid {pids})")
     else:
@@ -997,8 +1008,87 @@ def maybe_self_update() -> int | None:
     return 0
 
 
+def run_cli(argv: list) -> int | None:
+    """Handle `StreamScale.exe apply|revert|show` and exit.
+
+    Why this lives in the tray executable
+    -------------------------------------
+    Sunshine's prep-commands need a program to run. Previously that was a
+    batch launcher sitting beside the project (`streamscale.bat`), which meant
+    the packaged exe could not serve as a prep-command on its own. Anyone who
+    copied the exe somewhere else -- Downloads, a USB stick -- and pointed
+    Sunshine at it got a disaster rather than an error:
+
+        "C:\\...\\StreamScale.exe" apply
+
+    The tray executable treated `apply` as an ordinary launch, started a
+    second tray, hit the single-instance guard and displayed a modal "already
+    running" dialog. Sunshine waits for its prep-command to *exit*, so the
+    session's teardown stalled indefinitely: the encoder kept its virtual
+    display alive, the client showed a black screen, and the display
+    configuration was never restored.
+
+    Recognising the verbs here removes the whole failure mode. The exe is now
+    a valid prep-command wherever it happens to live, and an unknown argument
+    is reported rather than silently starting a tray.
+
+    Returns an exit code, or None when this is not a CLI invocation.
+    """
+    # No arguments means "start the tray", which is the normal double-click.
+    if len(argv) < 2:
+        return None
+
+    # Any argument at all signals a command-line invocation. Never fall back
+    # to starting a tray: a prep-command that becomes a tray instead of
+    # exiting is what stalls Sunshine's session teardown, and if Sunshine is
+    # configured with a verb we do not know, failing loudly is far better
+    # than hanging.
+    known = {"apply", "revert", "show"}
+    raw = argv[1]
+    verb = raw.lstrip("-/").lower()
+
+    if raw.startswith(("-", "/")):
+        if verb in ("h", "help", "?", "version", "v"):
+            # Let argparse print usage or the version; it exits on its own.
+            known_flag = True
+        else:
+            known_flag = False
+    else:
+        known_flag = verb in known
+
+    if not known_flag:
+        log(f"unrecognised argument {raw!r}; not a valid command")
+        sys.stderr.write(
+            f"{APP_NAME}: unknown command {raw!r}\n"
+            f"Valid commands: apply, revert, show\n"
+            f"Run with no arguments to start the tray.\n")
+        return 2
+
+    # No dialogs on this path. A modal box blocks until a human clicks it,
+    # and Sunshine waits on this process the entire time.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, str(bundle_root() / "src"))
+        if getattr(sys, "frozen", False):
+            _sys.path.insert(0, str(runtime_dir()))
+        from streamscale import cli
+    except Exception:
+        log("CLI dispatch failed:\n" + traceback.format_exc())
+        return 2
+
+    code = cli.main(argv[1:])
+    log(f"CLI {raw} finished with code {code}")
+    return code
+
+
 def main() -> int:
     setup_logging()
+
+    # Before anything else: a prep-command invocation must not become a tray.
+    cli_code = run_cli(sys.argv)
+    if cli_code is not None:
+        return cli_code
+
     log("=" * 56)
     log(f"starting {APP_NAME} {APP_VERSION}")
 

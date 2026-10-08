@@ -1,5 +1,58 @@
 # Change log
 
+## 0.6.1
+
+* **The exe now works as a Sunshine prep-command, wherever it sits.** It
+  understands `apply` / `revert` / `show` itself, so the batch launcher is no
+  longer needed. This fixes a failure that cost a real session:
+
+  ```
+  "C:\...\Downloads\StreamScale.exe" apply
+  ```
+
+  That copy did not understand the verb. It treated `apply` as an ordinary
+  launch, started a second tray, and hit the single-instance guard. Sunshine
+  waits for its prep-command to exit, so the session teardown stalled for
+  five and a half minutes: the client showed an empty desktop, and the
+  display configuration was never restored — leaving a phantom second
+  monitor behind. An unknown verb now exits non-zero with a message instead
+  of silently becoming a tray.
+
+* **Start-up is ~125× faster: 0.2s instead of 25s.** The onefile build
+  unpacked ~19 MB into a temporary directory on every single run. Sunshine
+  calls the prep-command twice per stream, so that was ~50 seconds of dead
+  waiting, and slow enough to look like a hang. The build is now onedir, so
+  the payload stays unpacked and only the interpreter boot remains.
+
+  ```
+  onefile   25 s per start   (measured)
+  onedir   0.2 s per start   (measured)
+  ```
+
+  The cost moves to install time, paid once per version: 40 MB across 1020
+  files, about 1.4 seconds to copy.
+
+* Self-update handles the folder layout. The same Windows rules apply — a
+  folder holding a running program can be *renamed* but not overwritten, and
+  the leftover cannot be deleted until the process exits. Verified against a
+  genuinely running installation, not a simulation.
+
+* Fixed: the installed command was validated by reading the exe's output,
+  which a GUI build never produces (no stdout handle), so the check could
+  not match anything. It now judges by behaviour — a command-line build
+  returns in ~0.2s, a tray-only build keeps running — and kills a process
+  that fails to return, since a stray tray is what the check exists to
+  prevent.
+
+* Fixed: listing running instances matched on the caller's own image name,
+  so an upgrade staged in another folder looked for the wrong process and
+  could not stop the installed copy. It now takes the installed executable's
+  name. Path comparison is also case-insensitive, because Windows reports
+  the same folder as both `Temp` and `TEMP` depending on the caller.
+
+* The batch launcher points at the onedir folder; it previously launched a
+  bare exe that no longer exists.
+
 ## 0.6.0
 
 * **Upgrading is now a double-click.** Download the new package, open it, and

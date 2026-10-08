@@ -25,6 +25,15 @@
 
 ## 启动
 
+**双击 `启动StreamScale.bat`**，或直接双击 `StreamScale\StreamScale.exe`。
+
+> **注意**：程序是一个**文件夹**（`StreamScale\`），不是单个文件。
+> 移动或复制时要连整个文件夹一起，`_internal` 子文件夹必须和 exe 放在一起。
+
+---
+
+
+
 双击 `StreamScale.exe`，或 `启动StreamScale.bat`。
 
 启动后**没有窗口弹出**，图标出现在右下角通知区域（可能在折叠的「显示隐藏的图标」里）。

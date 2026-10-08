@@ -1,40 +1,49 @@
-"""Self-update: replace this executable while it is running.
+"""Self-update: replace this installation while it is running.
 
-How Windows behaves, measured rather than assumed
--------------------------------------------------
-Renaming a running executable is allowed; overwriting it is not:
+The installation is a folder
+----------------------------
+This ships as onedir: `StreamScale/StreamScale.exe` beside a
+`StreamScale/_internal/` folder. onefile was tried first and rejected --
+it unpacks ~19 MB into a temporary directory on every single run, which
+measured 25 seconds to start against 0.2 seconds for onedir. Sunshine waits
+for its prep-command to finish, so a 25-second start is not merely slow, it
+looks like a hang.
 
-    overwrite a running exe   -> PermissionError (file in use)
-    rename a running exe      -> succeeds, process keeps running
-    write a new file at the
-      now-vacant original path-> succeeds
-    delete the renamed file
-      while the process lives -> access denied
-    delete it after exit      -> succeeds
+The consequence is that an upgrade replaces a folder, not a file. The
+behaviour it relies on was measured before designing anything around it:
 
-That asymmetry is what makes a one-double-click upgrade possible. The
-running process names itself out of the way, drops the new executable into
-place, and then restarts from the new file. It cannot delete its own old
-image, so the leftover is cleaned up by the next launch, which can.
+    overwrite a running exe          -> denied (file in use)
+    rename a running exe             -> allowed, process keeps running
+    rename the folder holding it     -> allowed, process keeps running
+    write a new copy at the
+      now-vacant path                -> allowed
+    delete the old copy while the
+      process still runs             -> denied
+    delete it after the process exits-> allowed
+
+The asymmetry is what makes a one-double-click upgrade possible. The running
+program names its folder out of the way, drops the new one in place, and
+restarts from there. It cannot delete its own old files, so the leftover is
+removed by the next launch, which can.
 
 The sequence
 ------------
-    1. new exe starts, sees no other instance -> nothing to update
-    1. new exe starts, finds a running one    -> asks it to quit
-    2. old exe acknowledges, stops the tray, exits
-    3. new exe renames the old file aside, writes itself into place
-    4. new exe launches the file it just installed and exits
-    5. the installed copy cleans up the leftover image
+    1. new copy starts, sees no other instance -> nothing to update
+    1. new copy starts, finds a running one    -> asks it to quit
+    2. old copy acknowledges, stops the tray, exits
+    3. new copy renames the old folder aside, writes itself into place
+    4. new copy launches the file it just installed and exits
+    5. the installed copy cleans up the leftover folder
 
 Nothing here needs administrator rights: everything happens in the folder
-the executable already lives in, and the autostart entry is per-user.
+the program already lives in, and the autostart entry is per-user.
 
 Why a relaunch rather than continuing
 -------------------------------------
-The new process is still the downloaded file, running from wherever the
-user saved it (often Downloads). Continuing from there would leave the
-installed copy untouched and the two would drift apart. Relaunching from
-the installed path is what makes "just double-click the package" work.
+The new process is still running from wherever the user extracted it (often
+Downloads). Continuing from there would leave the installed copy untouched
+and the two would drift apart. Relaunching from the install path is what
+makes "just double-click the package" work.
 """
 
 from __future__ import annotations
@@ -42,6 +51,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.wintypes as wt
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -149,7 +159,7 @@ def list_pids(image_name: str) -> List[int]:
 
 
 def running_instances(exe_path: Path) -> List[int]:
-    """PIDs of processes running from exactly this path (excluding us).
+    """PIDs of processes running from exactly this installation (excluding us).
 
     Compares the full image path, not just the name: a user may have kept an
     older copy in Downloads, and signalling that one would shut down an
@@ -163,6 +173,42 @@ def running_instances(exe_path: Path) -> List[int]:
             continue
         image = process_image_path(pid)
         if image is not None and str(image).lower() == wanted:
+            found.append(pid)
+    return found
+
+
+def running_from_root(root: Path, exe_name: Optional[str] = None) -> List[int]:
+    """PIDs running from anywhere inside an installation folder.
+
+    onedir puts the exe one level down, and a future build might rearrange
+    those levels, so matching on "under this folder" is more durable than
+    matching one exact path.
+
+    `exe_name` defaults to this process's image name, which is right when
+    the running copy and the installed copy are the same program. Callers
+    looking for a *different* installation -- an upgrade staged in Downloads
+    observing the installed tray -- must pass the installed executable's
+    name, or the enumeration looks for the wrong process entirely.
+
+    Comparison is case-insensitive and normalised. Windows reports the two
+    halves of a path with whatever casing the caller happened to use --
+    GetTempPath returns TEMP while the configured value is Temp -- so a
+    plain relative_to() rejects a path that is in fact inside the root,
+    which would leave an upgrade unable to stop the running copy.
+    """
+    root_text = os.path.normcase(str(root.resolve())).rstrip("\\/")
+    ours = os.getpid()
+    name = exe_name or Path(sys.executable).name
+
+    found = []
+    for pid in list_pids(name):
+        if pid == ours:
+            continue
+        image = process_image_path(pid)
+        if image is None:
+            continue
+        image_text = os.path.normcase(str(image.resolve()))
+        if image_text == root_text or image_text.startswith(root_text + os.sep):
             found.append(pid)
     return found
 
@@ -256,17 +302,82 @@ def request_quit(pids: List[int]) -> bool:
     return wait_for_exit(pids, 10.0)
 
 
-def perform_update(target: Path, running_pids: Optional[List[int]] = None) -> UpdateOutcome:
-    """Replace `target` with the currently running executable.
+def install_root() -> Path:
+    """The folder that constitutes the installation.
 
-    Returns what happened. Nothing is deleted that cannot be recreated: the
-    old image is renamed, not removed, and it is left for the next launch to
-    clean up because a process cannot delete its own running image.
+    onedir layout:   <folder>/StreamScale.exe + <folder>/_internal/...
+        -> the install is the folder, and an upgrade replaces all of it.
+
+    onefile layout:  a lone StreamScale.exe
+        -> the install is that single file.
     """
-    source = Path(sys.executable).resolve()
+    exe = Path(sys.executable).resolve()
+    internal = exe.parent / "_internal"
+    return exe.parent if internal.is_dir() else exe
+
+
+def _stage_from_source(source_exe: Path) -> Path:
+    """The folder to copy, given the running executable.
+
+    In onedir the running exe sits inside the payload folder, so the source
+    folder is simply its parent. In onefile there are no loose files to copy:
+    the exe is the payload, and the returned path is the exe itself.
+    """
+    source_exe = source_exe.resolve()
+    internal = source_exe.parent / "_internal"
+    return source_exe.parent if internal.is_dir() else source_exe
+
+
+def _copy_tree(source: Path, target: Path, skip: Optional[set] = None) -> None:
+    """Copy a folder, replacing anything already there.
+
+    `skip` names top-level entries to leave alone. It is not currently used
+    for the payload itself but exists so a caller can preserve user data that
+    happens to live beside the program.
+    """
+    import shutil
+
+    skip = skip or set()
+    target.mkdir(parents=True, exist_ok=True)
+
+    for entry in source.iterdir():
+        if entry.name in skip:
+            continue
+        destination = target / entry.name
+        if entry.is_dir():
+            if destination.exists():
+                shutil.rmtree(destination, ignore_errors=True)
+            shutil.copytree(entry, destination)
+        else:
+            if destination.exists():
+                try:
+                    destination.unlink()
+                except OSError:
+                    pass
+            shutil.copy2(entry, destination)
+
+
+def perform_update(target: Path, running_pids: Optional[List[int]] = None) -> UpdateOutcome:
+    """Replace the installation with the currently running one.
+
+    Works for both layouts. The unit that gets renamed aside is whatever
+    `install_root()` reported for the target: a folder in onedir, a file in
+    onefile. Windows allows renaming either one while the program inside is
+    still running, which is what makes a double-click upgrade possible.
+    """
+    source_exe = Path(sys.executable).resolve()
     target = Path(target).resolve()
 
-    if source == target:
+    # The installation being replaced, in the same layout terms.
+    target_root = target.parent if (target.parent / "_internal").is_dir() else target
+    source_root = _stage_from_source(source_exe)
+
+    # Running from the install already: an ordinary start, not an upgrade.
+    try:
+        same = source_exe.samefile(target)
+    except OSError:
+        same = source_exe == target
+    if same:
         return UpdateOutcome(detail="already running from the install path")
 
     outcome = UpdateOutcome()
@@ -278,46 +389,63 @@ def perform_update(target: Path, running_pids: Optional[List[int]] = None) -> Up
                        "tray menu and try again")
         outcome.restart = True
 
-    if not target.parent.exists():
+    if not target_root.parent.exists():
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
+            target_root.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            return UpdateOutcome(detail=f"cannot create {target.parent}: {exc}")
+            return UpdateOutcome(detail=f"cannot create {target_root.parent}: {exc}")
 
-    # Renaming is permitted for a running image; overwriting is not. If the
-    # rename fails the old file is gone for another reason and we can simply
-    # write in its place.
-    old_image = None
-    if target.exists():
-        old_image = target.with_name(target.stem + ".old" + target.suffix)
+    # Renaming is permitted for a running image, and for the folder holding
+    # it; overwriting is not. If the rename fails the old copy is gone for
+    # another reason and the write can simply proceed.
+    old_copy = None
+    if target_root.exists():
+        if target_root.is_dir():
+            old_copy = target_root.with_name(target_root.name + ".old")
+        else:
+            old_copy = target_root.with_name(target_root.stem + ".old" + target_root.suffix)
         try:
-            if old_image.exists():
-                old_image.unlink()
+            if old_copy.exists():
+                shutil_rmtree_or_unlink(old_copy)
         except OSError:
             pass
         try:
-            os.replace(target, old_image)
+            os.replace(target_root, old_copy)
         except OSError as exc:
             outcome.detail = f"cannot move the old version aside: {exc}"
             return outcome
 
     try:
-        _copy_self_safely(source, target)
+        if source_root.is_dir():
+            _copy_tree(source_root, target_root)
+            installed = target_root / source_exe.name
+        else:
+            _copy_self_safely(source_root, target_root)
+            installed = target_root
     except OSError as exc:
         # Put the original back so the user is not left without an install.
-        if old_image is not None and not target.exists():
+        if old_copy is not None and not target_root.exists():
             try:
-                os.replace(old_image, target)
+                os.replace(old_copy, target_root)
             except OSError:
                 pass
         outcome.detail = f"cannot write the new version: {exc}"
         return outcome
 
     outcome.performed = True
-    outcome.installed_to = target
-    outcome.old_image = old_image
-    outcome.detail = f"updated {target.name}"
+    outcome.installed_to = installed
+    outcome.old_image = old_copy
+    outcome.detail = f"updated {target_root.name}"
     return outcome
+
+
+def shutil_rmtree_or_unlink(path: Path) -> None:
+    import shutil
+
+    if path.is_dir():
+        shutil.rmtree(path, ignore_errors=True)
+    else:
+        path.unlink()
 
 
 def _copy_self_safely(source: Path, target: Path) -> None:
@@ -356,27 +484,39 @@ def relaunch(path: Path, wait_for_pid: Optional[int] = None) -> None:
 # ----------------------------------------------------------------------
 
 def clean_up_previous_image() -> Optional[Path]:
-    """Delete the `.old` file left by a previous upgrade.
+    """Delete what a previous upgrade renamed aside.
 
-    Called on startup by the installed copy. It can do what the upgrading
-    process could not: a process may delete a file that is not its own
-    running image.
+    Called on startup by the installed copy, which can do what the upgrading
+    process could not: a running program cannot delete its own files, but it
+    can delete someone else's leftovers.
+
+    Handles both layouts -- a `.old` folder in onedir, a `.old.exe` file in
+    onefile -- because an upgrade may have come from either.
     """
     if not getattr(sys, "frozen", False):
         return None
+
     me = Path(sys.executable).resolve()
-    stale = me.with_name(me.stem + ".old" + me.suffix)
-    if not stale.exists():
-        return None
-    for _ in range(10):
-        try:
-            stale.unlink()
-            return stale
-        except PermissionError:
-            # The upgrading process may still be shutting down.
-            time.sleep(0.5)
-        except OSError:
-            return None
+    candidates = [
+        me.with_name(me.stem + ".old" + me.suffix),   # onefile: StreamScale.old.exe
+        me.parent.with_name(me.parent.name + ".old"),  # onedir:  StreamScale.old/
+    ]
+
+    for stale in candidates:
+        if not stale.exists():
+            continue
+        for _ in range(12):
+            try:
+                if stale.is_dir():
+                    shutil.rmtree(stale)
+                else:
+                    stale.unlink()
+                return stale
+            except PermissionError:
+                # The upgrading process may still be shutting down.
+                time.sleep(0.5)
+            except OSError:
+                break
     return None
 
 

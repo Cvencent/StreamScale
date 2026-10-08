@@ -72,6 +72,14 @@ colour table, every menu item, and a troubleshooting table (in Chinese).
 
 To build it yourself, see [runtime/README.md](runtime/README.md).
 
+## Installing
+
+Download the latest release, extract the archive, and run
+`StreamScale\StreamScale.exe`.
+
+The program is a **folder**, not a single file — `_internal/` must stay
+beside the exe. Move or copy the whole folder, not just the exe.
+
 ## Upgrading
 
 Double-click the new package. That is the whole procedure — no need to quit

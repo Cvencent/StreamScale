@@ -28,7 +28,26 @@ import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-EXE = HERE.parent / "StreamScale.exe"
+def _locate_exe() -> Path:
+    """Find the built StreamScale.exe, whatever layout it was built in.
+
+    The program ships as a folder now (onedir): the exe lives inside
+    `dist/StreamScale/` beside its `_internal/` payload. Older builds put a
+    lone exe directly in `dist/`. Both are checked so the self-checks keep
+    working across the change, and the newer location wins.
+    """
+    for candidate in (
+        HERE / "dist" / "StreamScale" / "StreamScale.exe",
+        HERE / "dist" / "StreamScale.exe",
+        HERE.parent / "StreamScale" / "StreamScale.exe",
+        HERE.parent / "StreamScale.exe",
+    ):
+        if candidate.exists():
+            return candidate
+    return HERE / "dist" / "StreamScale" / "StreamScale.exe"
+
+
+EXE = _locate_exe()
 user32 = ctypes.windll.user32
 WNDENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
 

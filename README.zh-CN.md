@@ -67,6 +67,13 @@ streamscale.bat show
 
 想自己构建见 [runtime/README.md](runtime/README.md)。
 
+## 安装
+
+下载最新 Release，解压，运行 `StreamScale\StreamScale.exe`。
+
+程序是一个**文件夹**而不是单个文件——`_internal\` 必须和 exe 放在一起。
+移动或复制时要连整个文件夹一起。
+
 ## 升级
 
 **双击新包即可**，不需要先退出正在运行的版本。

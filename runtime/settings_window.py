@@ -29,6 +29,54 @@ from typing import Callable, Dict, List, Optional
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+
+def _supports_cli(exe: Path) -> bool:
+    """Does this executable understand `apply` / `revert`?
+
+    Determined by behaviour, because the output cannot be read: this is a
+    GUI build (console=False), so Windows gives it no stdout handle and
+    anything it prints is lost. An earlier version looked for "apply" in
+    that output and therefore never matched anything.
+
+    The distinguishing behaviour is whether the process returns at all.
+
+        understands the verb -> parses it, does the work, exits in ~0.2s
+        does not             -> treats it as a normal launch, becomes a
+                                tray, and never exits
+
+    So a prompt return is the answer, whatever the exit code. A process
+    still alive at the timeout is killed rather than left running, since a
+    stray tray is exactly what this check exists to prevent.
+
+    This matters more than it looks. Sunshine waits for its prep-command to
+    exit, so installing a command that becomes a tray stalls the session
+    teardown: the client sees an empty desktop and the display configuration
+    is never restored.
+    """
+    if not exe.exists():
+        return False
+
+    try:
+        subprocess.run(
+            [str(exe), "--help"],
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return True
+    except subprocess.TimeoutExpired:
+        # Still running: it started something that does not return.
+        try:
+            subprocess.run(["taskkill", "/F", "/IM", exe.name],
+                           capture_output=True, text=True, encoding="gbk",
+                           errors="replace",
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception:
+            pass
+        return False
+    except OSError:
+        return False
+
 import sunshine_config
 import tray_app
 
@@ -188,14 +236,41 @@ class SettingsWindow:
     def _prep_commands(self):
         """The exact command strings to install.
 
-        Reuse the launcher that install/setup.py wrote when it exists, so the
-        tray and the manual instructions agree. Otherwise fall back to
-        invoking this very executable, which is correct when frozen.
+        The frozen executable handles the verbs itself, so it is always
+        usable as a prep-command -- wherever it sits. That matters more than
+        it looks: pointing Sunshine at a copy of the exe in some other folder
+        used to start a second tray instead, which blocked the session's
+        teardown indefinitely.
+
+        The batch launcher is used only when running from source, where
+        there is no exe to call.
         """
+        if getattr(sys, "frozen", False):
+            return f'"{sys.executable}" apply', f'"{sys.executable}" revert'
+
         launcher = tray_app.bundle_root() / "streamscale.bat"
         if launcher.exists():
             return f'"{launcher}" apply', f'"{launcher}" revert'
         return f'"{sys.executable}" apply', f'"{sys.executable}" revert'
+
+    def _verify_commands(self, apply_cmd: str) -> None:
+        """Refuse to install a command that cannot work.
+
+        An earlier build installed a command pointing at the tray exe, which
+        did not understand `apply`. Sunshine then waited forever on a process
+        that had become a tray, and the stream could not be shut down
+        cleanly. Checking here turns that into a clear message.
+        """
+        exe = apply_cmd.split('"')[1] if apply_cmd.startswith('"') else apply_cmd.split()[0]
+        if getattr(sys, "frozen", False) and str(Path(exe).resolve()) == str(Path(sys.executable).resolve()):
+            return   # the running exe handles the verbs; nothing to check
+        if _supports_cli(Path(exe)):
+            return
+        raise RuntimeError(
+            f"{Path(exe).name} does not accept the 'apply' command.\n\n"
+            "Sunshine would wait for it forever, leaving the stream unable "
+            "to close.\n\nInstall the current version, which handles the "
+            "command itself.")
 
     def _install(self) -> None:
         path = self._current_apps_path()
@@ -211,6 +286,14 @@ class SettingsWindow:
                 return
 
         apply_cmd, revert_cmd = self._prep_commands()
+
+        # Refuse to install something Sunshine would wait on forever.
+        try:
+            self._verify_commands(apply_cmd)
+        except RuntimeError as exc:
+            messagebox.showerror(tray_app.APP_NAME, str(exc))
+            return
+
         try:
             count, names = sunshine_config.install_prep(path, apply_cmd, revert_cmd, apps)
         except Exception as exc:
