@@ -44,9 +44,14 @@ def main() -> int:
 
     print("\n3. Tooltip length limit (Windows drops tooltips over 127 chars)")
     app = tray_app.TrayApp.__new__(tray_app.TrayApp)
+    # Built via __new__ to skip the constructor, so every attribute the
+    # methods touch has to be set by hand.
     app._icon = None
     app._status = "active"
     app._monitor = None
+    app._applied = set()
+    app._watcher = None
+    app._settings_window = None
     long_tip = app._tooltip()
     check("idle tooltip within 120", len(long_tip) <= 120, f"{len(long_tip)} chars")
 

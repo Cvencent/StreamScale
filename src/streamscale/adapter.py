@@ -54,6 +54,15 @@ class GameAdapter(ABC):
     #: Other names the game may be listed under in Sunshine.
     aliases: tuple = ()
 
+    #: Executable names this game runs as (lower case, e.g. "brotato.exe").
+    #:
+    #: Needed because Sunshine's press commands fire once, when the stream
+    #: starts. If the user reaches the game through Steam Big Picture, that
+    #: moment happens before the game has launched, so nothing can be applied
+    #: yet. The tray watches for these processes instead and applies the
+    #: profile once the game actually appears.
+    process_names: tuple = ()
+
     def __init__(self, session: Session, dry_run: bool = False,
                  state_dir: Optional[Path] = None):
         self.session = session

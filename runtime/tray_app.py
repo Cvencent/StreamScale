@@ -35,7 +35,7 @@ import traceback
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.3.0"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -270,8 +270,10 @@ class TrayApp:
     def __init__(self):
         self._icon = None
         self._monitor = None
+        self._watcher = None
         self._status = "idle"
         self._settings_window = None
+        self._applied: set = set()      # games whose profile is currently applied
 
     # -- state ---------------------------------------------------------
 
@@ -299,6 +301,8 @@ class TrayApp:
     def _tooltip(self) -> str:
         import tray_icons
         text = f"{APP_NAME} - {tray_icons.STATUS_TEXT.get(self._status, self._status)}"
+        if self._applied:
+            text += " [" + ", ".join(sorted(self._applied)) + "]"
         monitor = self._monitor
         if monitor and monitor.state.streaming:
             state = monitor.state
@@ -319,10 +323,129 @@ class TrayApp:
             f"res={state.resolution or '-'} app={state.app or '-'}")
         if state.streaming:
             self._set_status("active")
+            # Only worth scanning the process list while a stream is live.
+            self._set_watching(True)
         else:
+            # A stream ending must undo anything we applied mid-session.
+            self._release_all()
+            self._set_watching(False)
             # Distinguish "never started" from "just finished": the latter is
             # worth showing in blue so the user sees the restore happened.
             self._set_status("restored" if self._status == "active" else "idle")
+
+    # -- process watching ----------------------------------------------
+
+    def _set_watching(self, active: bool) -> None:
+        watcher = self._watcher
+        if watcher is not None:
+            watcher.set_active(active)
+
+    def _start_watcher(self) -> None:
+        """Begin watching for games launched from inside Steam Big Picture.
+
+        Sunshine's press commands run once, when the stream starts. When the
+        user reaches a game through Steam, that moment is before the game
+        exists, so nothing can be applied then. Watching for the process is
+        the only way to catch it.
+        """
+        try:
+            import process_watcher
+            import sys as _sys
+            _sys.path.insert(0, str(bundle_root() / "src"))
+            from streamscale import registry
+        except Exception:
+            log("process watching unavailable:\n" + traceback.format_exc())
+            return
+
+        names = registry.watched_processes()
+        if not names:
+            log("no adapters declare process names; watching disabled")
+            return
+
+        self._watcher = process_watcher.ProcessWatcher(
+            on_start=self._on_game_started,
+            on_exit=self._on_game_exited,
+        )
+        for proc in names:
+            cls = registry.find_by_process(proc)
+            if cls:
+                self._watcher.watch(proc, cls.name)
+        log(f"watching for processes: {', '.join(self._watcher.watched)}")
+        self._watcher.start()
+
+    def _game_adapter(self, game_name: str):
+        """Build an adapter for a running game, or None."""
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(bundle_root() / "src"))
+            from streamscale import env, registry
+        except Exception:
+            log("adapter load failed:\n" + traceback.format_exc())
+            return None
+
+        cls = None
+        for candidate in registry.ADAPTERS:
+            if candidate.name == game_name:
+                cls = candidate
+                break
+        if cls is None:
+            return None
+
+        state = self._monitor.state if self._monitor else None
+        session = env.Session(
+            app_id="", app_name=game_name,
+            client_name="", client_id="", client_unique_id="",
+            width=state.width if state else 0,
+            height=state.height if state else 0,
+            fps=0,
+        )
+        cfg = load_config()
+        return cls(session, state_dir=Path(cfg["state_dir"]) if cfg.get("state_dir") else None)
+
+    def _on_game_started(self, game_name: str) -> None:
+        """A watched game appeared while streaming -- apply its profile."""
+        cfg = load_config()
+        if not cfg.get("enabled", True):
+            log(f"{game_name} started, but scaling is disabled")
+            return
+        if game_name in self._applied:
+            return
+
+        adapter = self._game_adapter(game_name)
+        if adapter is None:
+            return
+        try:
+            result = adapter.apply()
+        except Exception as exc:
+            log(f"{game_name}: apply failed: {exc}")
+            self._set_status("error")
+            return
+
+        self._applied.add(game_name)
+        log(f"{game_name} started -> {result.detail}")
+        self._set_status("active")
+        self._refresh_icon()
+
+    def _on_game_exited(self, game_name: str) -> None:
+        """The game closed. Put its settings back right away."""
+        if game_name not in self._applied:
+            return
+        adapter = self._game_adapter(game_name)
+        if adapter is None:
+            return
+        try:
+            result = adapter.revert()
+        except Exception as exc:
+            log(f"{game_name}: revert failed: {exc}")
+            return
+        self._applied.discard(game_name)
+        log(f"{game_name} exited -> {result.detail}")
+
+    def _release_all(self) -> None:
+        """Undo every profile we applied, e.g. when the stream ends."""
+        for game_name in list(self._applied):
+            self._on_game_exited(game_name)
+        self._applied.clear()
 
     def _start_monitor(self) -> None:
         import stream_monitor
@@ -335,6 +458,7 @@ class TrayApp:
         log(f"monitoring {path}")
         self._monitor = stream_monitor.LogMonitor(path, self._on_stream_change)
         self._monitor.start()
+        self._start_watcher()
         self._refresh_icon()
 
     # -- menu actions --------------------------------------------------
@@ -385,6 +509,11 @@ class TrayApp:
 
     def _quit(self, icon=None, _item=None) -> None:
         log("quit requested")
+        # Restore anything still applied before disappearing: leaving a
+        # game stuck at handheld font sizes would be a nasty surprise.
+        self._release_all()
+        if self._watcher:
+            self._watcher.stop()
         if self._monitor:
             self._monitor.stop()
         target = icon or self._icon

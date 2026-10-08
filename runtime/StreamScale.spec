@@ -44,7 +44,7 @@ hiddenimports = [
     "pystray._win32",
     "PIL.Image",
     "PIL.ImageDraw",
-    # Pulled in lazily by the settings window.
+    # Pulled in lazily by the settings window and the process watcher.
     "streamscale.registry",
     "streamscale.games.brotato",
 ]

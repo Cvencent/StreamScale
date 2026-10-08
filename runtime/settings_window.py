@@ -544,7 +544,25 @@ class SettingsWindow:
             pass
 
     def close(self) -> None:
+        """Tear down carefully to avoid tkinter's noisy __del__ errors.
+
+        Tkinter variables garbage-collect after the interpreter has left the
+        main loop, and their __del__ then raises
+        "main thread is not in main loop". Each one prints a traceback,
+        which fills the log and looks like a real fault. Dropping the
+        variables explicitly, while the loop is still alive, avoids it.
+        """
         try:
+            # Drop references to every tk variable we created, so their
+            # destructors run now rather than at interpreter shutdown.
+            for name, value in list(vars(self).items()):
+                if isinstance(value, tk.Variable):
+                    try:
+                        value.set("")
+                    except tk.TclError:
+                        pass
+                    setattr(self, name, None)
+            self.root.quit()
             self.root.destroy()
         except tk.TclError:
             pass

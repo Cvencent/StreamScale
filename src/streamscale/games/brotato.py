@@ -38,6 +38,13 @@ class BrotatoAdapter(JsonFileAdapter):
     name = "Brotato"
     aliases = ("Brotato", "土豆兄弟")
 
+    # Executable names, for the case where the game is launched from inside
+    # Steam Big Picture rather than as its own Sunshine app entry. Sunshine's
+    # press commands only run at the moment a stream starts (when Steam is
+    # starting and the game has not launched yet), so the tray watches for
+    # these processes instead and applies the profile when one appears.
+    process_names = ("brotato.exe",)
+
     # The <steamid> folder varies per user, so resolve it at runtime.
     settings_path_template = "%APPDATA%/Brotato"
     container_key = "settings"

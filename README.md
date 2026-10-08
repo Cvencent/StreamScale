@@ -87,6 +87,25 @@ No window polling, no screen scraping, no guessing. If
 `SUNSHINE_APP_NAME` is absent the user launched the game normally on the
 desktop, and StreamScale does nothing at all.
 
+### Games launched from inside Steam
+
+Press commands fire once, when a stream starts. If you reach a game through
+Steam Big Picture, that moment arrives before the game exists, so there is
+nothing to configure yet.
+
+That case is handled by the tray app, which watches for the game's process
+while a stream is running and applies the profile when it appears:
+
+```
+stream starts (Steam Big Picture)  -> nothing to do yet, correctly
+you launch Brotato from Steam      -> brotato.exe appears -> profile applied
+you close Brotato                  -> settings restored
+```
+
+Watching only happens during a stream, so it costs nothing the rest of the
+time. Adapters declare the executable names to watch via
+`process_names`.
+
 ## Configuration
 
 Optional. With no config file the adapter's built-in heuristic is used.

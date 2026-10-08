@@ -55,3 +55,31 @@ def find(app_name: str) -> Optional[Type[GameAdapter]]:
 
 def known_names() -> List[str]:
     return sorted(_LOOKUP.keys())
+
+
+# ----------------------------------------------------------------------
+# Lookup by executable name
+# ----------------------------------------------------------------------
+
+_PROCESS_LOOKUP: Dict[str, Type[GameAdapter]] = {}
+for _cls in ADAPTERS:
+    for _proc in getattr(_cls, "process_names", ()) or ():
+        _PROCESS_LOOKUP[_proc.strip().lower()] = _cls
+
+
+def find_by_process(process_name: str) -> Optional[Type[GameAdapter]]:
+    """Return the adapter whose game runs as this executable, or None.
+
+    Used by the tray: a game launched from inside Steam Big Picture is
+    already running by the time anyone can tell, so matching on the process
+    is the only reliable signal. Press commands cannot help there because
+    they fire before the game exists.
+    """
+    if not process_name:
+        return None
+    return _PROCESS_LOOKUP.get(process_name.strip().lower())
+
+
+def watched_processes() -> List[str]:
+    """Every executable name that any adapter wants watched."""
+    return sorted(_PROCESS_LOOKUP)
