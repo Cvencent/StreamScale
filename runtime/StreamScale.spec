@@ -40,13 +40,24 @@ if launcher.exists():
 
 icon = runtime / "app.ico"
 
+# A version resource is what lets an upgrade compare builds without running
+# them. Generated from APP_VERSION so there is one source of truth.
+version_file = runtime / "app_version.txt"
+if not version_file.exists():
+    import subprocess
+    subprocess.run([sys.executable, str(runtime / "version_info.py")],
+                   cwd=str(runtime), check=False)
+
 hiddenimports = [
     "pystray._win32",
     "PIL.Image",
     "PIL.ImageDraw",
-    # Pulled in lazily by the settings window and the process watcher.
+    # Pulled in lazily by the settings window, the process watcher and the
+    # updater. None of these are reachable by static analysis.
     "streamscale.registry",
     "streamscale.games.brotato",
+    "updater",
+    "version_info",
 ]
 
 excludes = [
@@ -87,6 +98,7 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,          # tray app: no console window
     disable_windowed_traceback=False,
+    version=str(version_file) if version_file.exists() else None,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,

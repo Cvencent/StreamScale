@@ -35,7 +35,7 @@ import traceback
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -765,12 +765,263 @@ class TrayApp:
         icon.visible = True
         log(f"{APP_NAME} {APP_VERSION} ready (frozen={getattr(sys, 'frozen', False)})")
         self._start_monitor()
+        self._watch_for_update_request()
+
+    def _watch_for_update_request(self) -> None:
+        """Exit cleanly when a new build asks us to step aside.
+
+        An upgrade cannot overwrite a running executable, so it renames us
+        and restarts from the new file -- which needs this process gone
+        first, and needs the settings it changed put back on the way out.
+        Polling a named event is how the message arrives; the tray's own
+        loop owns the main thread, so this runs beside it.
+        """
+        try:
+            import updater
+        except Exception:
+            return
+
+        def worker():
+            signal = updater.ShutdownSignal()
+            handle = signal.create()
+            if not handle:
+                return
+            try:
+                while True:
+                    # 1 s slices so closing the app does not wait on the wait.
+                    result = ctypes.windll.kernel32.WaitForSingleObject(handle, 1000)
+                    if result == 0:
+                        log("an upgrade is replacing this build; quitting")
+                        self._quit(self._icon)
+                        return
+                    if self._icon is None:
+                        return
+            except Exception:
+                log("update watcher stopped:\n" + traceback.format_exc())
+            finally:
+                signal.close()
+
+        threading.Thread(target=worker, name="update-watch", daemon=True).start()
+
+
+def _install_record_path() -> Path:
+    return config_dir() / "install.json"
+
+
+def record_install_path(exe: Path | None = None) -> None:
+    """Remember where this app lives, for the next upgrade to find.
+
+    Without a record, an upgrade launched from Downloads has nothing to go
+    on: it sees only itself, concludes there is no installation, and does
+    nothing. The autostart entry is one source of truth but exists only if
+    the user enabled it, so a dedicated record covers the rest.
+    """
+    import json
+    target = exe or (Path(sys.executable).resolve()
+                     if getattr(sys, "frozen", False) else None)
+    if target is None:
+        return
+    try:
+        path = _install_record_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"exe": str(target)}, indent=2),
+                        encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _installed_exe() -> Path:
+    """Where this app is meant to live, whether or not it runs from there.
+
+    Checked in order of reliability:
+
+      1. the recorded install path, written on first run;
+      2. the autostart entry, which names the executable Windows launches;
+      3. this process's own location.
+
+    (1) before (2) matters when the user moved the app: the record follows
+    the move, whereas the registry would still point at the old place until
+    the next run repairs it.
+    """
+    import json
+
+    record = _install_record_path()
+    if record.exists():
+        try:
+            recorded = json.loads(record.read_text(encoding="utf-8")).get("exe")
+            if recorded:
+                candidate = Path(recorded)
+                if candidate.exists():
+                    return candidate.resolve()
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+
+    from_registry = _autostart_target()
+    if from_registry is not None:
+        return from_registry.resolve()
+
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve()
+
+    # Running from source: treat the project-root exe as the install.
+    return (Path(__file__).resolve().parent.parent / "StreamScale.exe")
+
+
+def _autostart_target() -> Path | None:
+    """The executable path recorded in the autostart entry, if any."""
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
+            value, _ = winreg.QueryValueEx(key, _RUN_VALUE)
+    except OSError:
+        return None
+    text = str(value).strip()
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        if end > 1:
+            candidate = Path(text[1:end])
+            return candidate if candidate.exists() else None
+    return None
+
+
+def _repair_autostart(installed: Path) -> None:
+    """Point the autostart entry at the new location after an upgrade.
+
+    Without this an upgrade into a different folder silently breaks
+    autostart: the registry would keep pointing at a path that no longer
+    holds the current build.
+    """
+    if not autostart_enabled():
+        return
+    import winreg
+    try:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
+            winreg.SetValueEx(key, _RUN_VALUE, 0, winreg.REG_SZ, f'"{installed}"')
+        log(f"autostart repointed to {installed}")
+    except OSError as exc:
+        log(f"could not update the autostart entry: {exc}")
+
+
+def maybe_self_update() -> int | None:
+    """Handle a double-clicked package: install it over the existing copy.
+
+    Returns an exit code when this process should stop (the upgrade ran, and
+    the freshly installed copy was launched in its place), or None to carry
+    on starting normally.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+
+    running = Path(sys.executable).resolve()
+    try:
+        installed = _installed_exe().resolve()
+    except Exception:
+        return None
+
+    if running == installed:
+        return None
+
+    # Running from somewhere else. Is this a newer build, or is the user
+    # holding an old download?
+    try:
+        import updater
+    except Exception:
+        return None
+
+    new_version = updater.read_exe_version(running) or APP_VERSION
+    old_version = updater.read_exe_version(installed)
+
+    if not installed.exists():
+        log(f"no installation found at {installed}; nothing to upgrade")
+        return None
+
+    if old_version is None:
+        # An install from before versions were embedded. Treat the incoming
+        # build as newer: it is the one that has version information at all.
+        log(f"installed copy has no version resource; assuming {new_version} is newer")
+    elif updater.compare_versions(new_version, old_version) <= 0:
+        detail = (f"{new_version} is not newer than the installed {old_version}")
+        log(f"upgrade declined: {detail}")
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                f"You are opening {APP_NAME} {new_version}, but {old_version} "
+                f"is already installed.\n\n"
+                f"Nothing was changed.\n\nInstalled at:\n{installed}",
+                f"{APP_NAME} - no upgrade needed", 0x40)
+        except Exception:
+            pass
+        return 0
+
+    log(f"upgrading {installed} from {old_version or 'unknown'} to {new_version}")
+
+    pids = updater.running_instances(installed)
+    if pids:
+        log(f"asking the running instance to exit (pid {pids})")
+    else:
+        log("no running instance to stop")
+
+    outcome = updater.perform_update(installed, pids)
+    if not outcome.performed:
+        log(f"upgrade failed: {outcome.detail}")
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                f"{APP_NAME} could not be updated.\n\n{outcome.detail}",
+                f"{APP_NAME} - update failed", 0x10)
+        except Exception:
+            pass
+        return 1
+
+    log(f"installed {new_version} to {installed}")
+
+    # The installed copy cleans up the leftover image; tell it what happened
+    # so it can report the upgrade instead of looking like a fresh start.
+    try:
+        updater.mark_handoff(log_dir(), new_version)
+    except Exception:
+        pass
+
+    _repair_autostart(installed)
+
+    should_restart = outcome.restart or autostart_enabled()
+    if should_restart:
+        log("starting the installed copy")
+        try:
+            updater.relaunch(installed)
+        except Exception as exc:
+            log(f"could not start the installed copy: {exc}")
+            return 1
+    else:
+        log("the tray was not running before the upgrade; leaving it closed")
+    return 0
 
 
 def main() -> int:
     setup_logging()
     log("=" * 56)
     log(f"starting {APP_NAME} {APP_VERSION}")
+
+    # Double-clicking a downloaded package lands here: install over the
+    # existing copy, then hand off to it.
+    code = maybe_self_update()
+    if code is not None:
+        return code
+
+    try:
+        import updater
+        stale = updater.clean_up_previous_image()
+        if stale is not None:
+            log(f"removed the previous version's image: {stale.name}")
+        handoff = updater.consume_handoff(log_dir())
+        if handoff:
+            log(f"upgraded to {APP_VERSION} (handover from {handoff})")
+    except Exception:
+        log("update housekeeping skipped:\n" + traceback.format_exc())
+
+    # Remember where we live, so a future upgrade launched from Downloads
+    # knows which installation to replace.
+    record_install_path()
 
     guard = SingleInstance()
     if guard.already_running:

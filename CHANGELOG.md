@@ -1,5 +1,36 @@
 # Change log
 
+## 0.6.0
+
+* **Upgrading is now a double-click.** Download the new package, open it, and
+  it replaces the installed copy and restarts it. No manual "quit first",
+  no dialogs: the icon disappears for about a second and comes back.
+* What makes that possible, measured rather than assumed — Windows refuses to
+  overwrite a running executable but permits renaming it:
+  ```
+  overwrite a running exe   -> denied (file in use)
+  rename a running exe      -> allowed, the process keeps running
+  write a new file at the
+    now-vacant path         -> allowed
+  ```
+  So the old build renames itself aside and the new build takes its place.
+  A process cannot delete its own running image, so the leftover is removed
+  by the next launch, which can.
+* The running instance is asked to step aside through a named event, and
+  restores the game settings it changed on the way out — an upgrade must not
+  leave a game stuck at handheld font sizes.
+* The build now carries a **Windows version resource**, so an upgrade can
+  compare versions without launching anything. Opening an older package is
+  refused with an explanation instead of silently downgrading. This also
+  fills a gap: previously the packaged exe had no version information at all,
+  and the version string inside the bundle was compressed and unreadable.
+* Autostart is repointed after an upgrade, so enabling it keeps working even
+  when the install moves.
+* Whether the tray restarts matches how it was before: running stays running,
+  closed stays closed.
+* The install location is remembered on first run, so an upgrade launched
+  from the Downloads folder can find what to replace.
+
 ## 0.5.0
 
 * **Black bars on a 4:3 screen can now be removed.** Brotato is laid out for

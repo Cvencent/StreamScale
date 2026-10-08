@@ -72,6 +72,24 @@ colour table, every menu item, and a troubleshooting table (in Chinese).
 
 To build it yourself, see [runtime/README.md](runtime/README.md).
 
+## Upgrading
+
+Double-click the new package. That is the whole procedure — no need to quit
+the running copy first.
+
+It finds the installed version, compares versions, asks the running instance
+to step aside (which restores any game settings it changed), swaps the files,
+and restarts from the install path. The tray icon blinks out for about a
+second. There are no dialogs.
+
+Windows does not allow overwriting a running executable, which is why the old
+build is renamed aside rather than replaced in place. The leftover image is
+removed by the next launch, since a process cannot delete its own running
+image.
+
+Opening an older package is refused rather than applied, so a mis-download
+cannot silently downgrade you.
+
 ## How detection works
 
 Sunshine injects environment variables into the process it launches. Two

@@ -13,6 +13,8 @@ runtime/
   sunshine_config.py   safe reading/writing of Sunshine's apps.json
   stream_monitor.py    tails sunshine.log to detect stream state
   process_watcher.py   watches for games launched from inside Steam
+  updater.py           self-update: replace a running exe, restart it
+  version_info.py      writes the Windows version resource
   tray_icons.py        draws the status icons programmatically
   StreamScale.spec     PyInstaller recipe
   build.py             one-command build
@@ -22,6 +24,8 @@ runtime/
   _live_midstream.py   live: real exe, stand-in game process, real scaling
   _check_godot.py      override.cfg editing safety
   _check_crossproc.py  apply/revert across separate processes
+  _check_updater.py    version compare, rename-and-write, signals
+  _check_upgrade_e2e.py the double-click upgrade, end to end
 ```
 
 ## Build
@@ -64,9 +68,11 @@ repeatable; each cleans up after itself.
 .buildvenv\Scripts\python.exe _live_midstream.py    REM applies when a game launches
 .buildvenv\Scripts\python.exe _check_godot.py       REM override.cfg safety
 .buildvenv\Scripts\python.exe _check_crossproc.py   REM apply/revert across processes
+.buildvenv\Scripts\python.exe _check_updater.py     REM upgrade primitives
+.buildvenv\Scripts\python.exe _check_upgrade_e2e.py REM the whole upgrade flow
 ```
 
-191 assertions across twelve checks. Two of them carry the most weight,
+244 assertions across fourteen checks. Two of them carry the most weight,
 and either can pass while the packaged app is quietly broken:
 
 * `_e2e_exe.py` runs the real executable against a scratch log and asserts
