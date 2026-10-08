@@ -106,6 +106,18 @@ Sunshine 会向它启动的进程注入环境变量。StreamScale 只需要其�
 
 也可以在 `config.json` 里手动写 `"font_scale": 1.5`。
 
+### 4:3 屏幕上的黑边
+
+多数游戏按 16:9 排版，放到 4:3 的掌机上就会留黑边。**Godot 引擎的游戏
+（如 Brotato）可以不改游戏文件就解决**——引擎启动时会读取 exe 旁边的
+`override.cfg`，用它覆盖游戏内置配置。
+
+用托盘程序：Settings → General → **Screen fill**。三个选项：
+保持原样（默认）／**铺满且不变形（推荐）**／拉伸铺满（会变形）。
+
+文件是**合并写入**而非覆盖（Brotato 的 ModLoader 也读它），
+串流结束时改动被精确撤回。
+
 ## 配置
 
 **可选**。没有配置文件时使用适配器内置的启发式规则。如需覆盖，创建
@@ -130,6 +142,13 @@ Sunshine 会向它启动的进程注入环境变量。StreamScale 只需要其�
 | `max_client_width` | 宽于此值的客户端跳过（例如放过电视） |
 | `state_dir` | 备份存放位置；留空 = `~/.streamscale` |
 | `clients` | 按客户端的精确覆盖，优先级高于启发式 |
+| `preapply` | 串流开始就应用配置（Steam 启动的游戏需要它） |
+| `font_scale` | 字号倍率：1.0 = 自动，调大让字更大 |
+| `aspect_fill` | 黑边处理：`off` 保持／`expand` 铺满不变形／`stretch` 拉伸 |
+
+| `preapply` | 串流开始即应用，Steam 启动的游戏需要它 |
+| `font_scale` | 自动字号之上的倍率 |
+| `aspect_fill` | `off` / `expand` / `stretch` |
 
 ## 已支持的游戏
 

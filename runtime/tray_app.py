@@ -35,7 +35,7 @@ import traceback
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -238,6 +238,13 @@ DEFAULT_CONFIG = {
     # Multiplier applied to the computed font size, so the user can fine-tune
     # without editing adapters. 1.0 keeps the built-in heuristic.
     "font_scale": 1.0,
+    # Fill the screen instead of keeping the game's own aspect ratio, for
+    # games whose 16:9 layout is letterboxed on a 4:3 handheld.
+    #   "off"    - leave the game's aspect alone (black bars)
+    #   "expand" - enlarge the render area at the same scale: fills the
+    #              screen, adds visible play area, no cropping or distortion
+    #   "stretch"- scale to fill exactly, which distorts the image
+    "aspect_fill": "off",
 }
 
 
@@ -384,6 +391,7 @@ class TrayApp:
                 continue
             adapter = cls(session, state_dir=state_dir)
             self._apply_font_scale(adapter, cfg)
+            self._apply_aspect_choice(adapter, cfg)
             pairs.append((cls.name, adapter))
         return pairs
 
@@ -498,7 +506,30 @@ class TrayApp:
         adapter = cls(session,
                       state_dir=Path(cfg["state_dir"]) if cfg.get("state_dir") else None)
         self._apply_font_scale(adapter, cfg)
+        self._apply_aspect_choice(adapter, cfg)
         return adapter
+
+    @staticmethod
+    def _apply_aspect_choice(adapter, cfg: dict) -> None:
+        """Fold the user's aspect preference into the adapter's behaviour.
+
+        The mapping from preference to Godot value lives here rather than in
+        the adapter, so the setting stays a user-facing choice ("fill the
+        screen" / "stretch") instead of leaking engine vocabulary into every
+        adapter that supports it.
+        """
+        choice = str(cfg.get("aspect_fill", "off") or "off").lower()
+        if not hasattr(adapter, "aspect_key"):
+            return
+
+        if choice in ("off", "none", "keep", ""):
+            adapter.aspect_key = None
+        elif choice in ("expand", "fill"):
+            adapter.aspect_key = "window/stretch/aspect"
+            adapter.aspect_stream_value = "expand"
+        elif choice in ("stretch", "ignore"):
+            adapter.aspect_key = "window/stretch/aspect"
+            adapter.aspect_stream_value = "ignore"
 
     @staticmethod
     def _apply_font_scale(adapter, cfg: dict) -> None:

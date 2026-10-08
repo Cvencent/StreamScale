@@ -115,6 +115,20 @@ Adapters declare what to watch via `process_names`.
 Settings → General → **Text size** slider. `1.0×` means automatic; raise it
 to make text larger. Also settable as `"font_scale": 1.5` in `config.json`.
 
+### Black bars on a 4:3 screen
+
+Most games are laid out for 16:9, so a 4:3 handheld letterboxes them. For
+Godot games (Brotato) this is fixable without touching the game: the engine
+reads an `override.cfg` beside the executable and lets those project settings
+be replaced.
+
+Settings → General → **Screen fill**: keep the game's shape (default), fill
+the screen at the same scale (`expand` — no distortion, and more of the play
+area becomes visible), or stretch to fit exactly (`ignore` — distorted).
+
+The file is merged rather than overwritten, since Brotato's ModLoader reads
+it too, and the change is reverted byte-for-byte when the stream ends.
+
 ## Configuration
 
 Optional. With no config file the adapter's built-in heuristic is used.
@@ -139,6 +153,13 @@ To override, create `%APPDATA%\StreamScale\config.json`:
 | `max_client_width` | skip clients wider than this (leaves the TV alone) |
 | `state_dir` | where backups live; empty = `~/.streamscale` |
 | `clients` | per-client overrides, beat the heuristic |
+| `preapply` | apply at stream start, needed for Steam-launched games |
+| `font_scale` | text size multiplier; 1.0 = automatic |
+| `aspect_fill` | black bars: `off` / `expand` (no distortion) / `stretch` |
+
+| `preapply` | apply at stream start, needed for Steam-launched games |
+| `font_scale` | multiplies the automatic text size |
+| `aspect_fill` | `off` / `expand` / `stretch` |
 
 ## Supported games
 

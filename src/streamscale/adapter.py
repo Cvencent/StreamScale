@@ -107,12 +107,23 @@ class GameAdapter(ABC):
         safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in self.name)
         return self.state_dir / f"{safe}.json"
 
-    def save_backup(self, state: Dict[str, Any]) -> None:
+    def save_backup(self, state: Dict[str, Any],
+                    raw: Optional[str] = None) -> None:
+        """Park the previous state, and optionally the file's exact text.
+
+        Storing the raw text matters: re-serialising JSON cannot reproduce
+        the original formatting, so a restore used to rewrite the file in a
+        different shape (indentation collapsed, key spacing changed). The
+        values were right but the file was visibly not the one the user had.
+        With the original text on hand the restore is byte-for-byte.
+        """
         self.state_dir.mkdir(parents=True, exist_ok=True)
+        payload: Dict[str, Any] = {"app": self.session.app_name, "state": state}
+        if raw is not None:
+            payload["raw"] = raw
         tmp = self.backup_path.with_suffix(".tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump({"app": self.session.app_name, "state": state}, fh,
-                      ensure_ascii=False, indent=2)
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
         os.replace(tmp, self.backup_path)
 
     def load_backup(self) -> Optional[Dict[str, Any]]:
@@ -123,6 +134,28 @@ class GameAdapter(ABC):
                 return json.load(fh).get("state")
         except (OSError, json.JSONDecodeError):
             return None
+
+    def load_backup_raw(self) -> Optional[str]:
+        """The settings file's exact text as of apply(), if it was kept."""
+        if not self.backup_path.exists():
+            return None
+        try:
+            with open(self.backup_path, encoding="utf-8") as fh:
+                return json.load(fh).get("raw")
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def read_raw(self) -> Optional[str]:
+        """Hook: the current settings file as text, for exact restoration.
+
+        Subclasses that own a text file should implement this. Returning None
+        simply means the restore falls back to writing the parsed values.
+        """
+        return None
+
+    def write_raw(self, text: str) -> None:
+        """Hook: write pre-recorded text back. Paired with read_raw()."""
+        raise NotImplementedError
 
     def clear_backup(self) -> None:
         try:
@@ -135,14 +168,24 @@ class GameAdapter(ABC):
     # ------------------------------------------------------------------
 
     def apply(self) -> ApplyResult:
-        """Switch to the streaming profile, remembering the previous state."""
+        """Switch to the streaming profile, remembering the previous state.
+
+        The file's exact text is captured alongside the parsed values so that
+        revert can restore the original bytes rather than a re-serialised
+        approximation of them.
+        """
         current = self.read_state()
         want = self.target_state(current)
 
         if current == want:
             return ApplyResult(changed=False, detail="already at target state")
 
-        self.save_backup(current)
+        try:
+            raw = self.read_raw()
+        except Exception:
+            raw = None
+
+        self.save_backup(current, raw=raw)
         if self.dry_run:
             return ApplyResult(changed=False,
                                detail=f"[dry-run] would set {want}")
@@ -160,9 +203,24 @@ class GameAdapter(ABC):
             return ApplyResult(changed=False,
                                detail=f"[dry-run] would restore {saved}")
 
-        self.write_state(saved)
+        # Prefer putting the original text back verbatim; fall back to a
+        # parsed write when the text was not recorded (older backups, or a
+        # subclass that does not implement read_raw).
+        raw = self.load_backup_raw()
+        restored_exactly = False
+        if raw is not None:
+            try:
+                self.write_raw(raw)
+                restored_exactly = True
+            except (NotImplementedError, OSError):
+                restored_exactly = False
+
+        if not restored_exactly:
+            self.write_state(saved)
+
         self.clear_backup()
-        return ApplyResult(changed=True, detail=f"restored {saved}")
+        how = "verbatim" if restored_exactly else "from values"
+        return ApplyResult(changed=True, detail=f"restored {how}: {saved}")
 
 
 # ----------------------------------------------------------------------
@@ -188,6 +246,46 @@ class JsonFileAdapter(GameAdapter):
     # Which top-level object holds the interesting keys. Some games nest
     # under a "settings" key, others are flat.
     container_key: Optional[str] = None
+
+    def read_raw(self) -> Optional[str]:
+        """The settings file exactly as it is now, for verbatim restore.
+
+        Read with newline="" so CRLF survives: the default universal-newline
+        translation would silently convert every line ending in a file we
+        hand back to the game.
+        """
+        try:
+            path = self.settings_path()
+        except AdapterError:
+            return None
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8", newline="") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    def write_raw(self, text: str) -> None:
+        """Put recorded text back unchanged."""
+        self._atomic_write_text(self.settings_path(), text)
+
+    @staticmethod
+    def _atomic_write_text(path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+                fh.write(text)
+            if path.exists():
+                shutil.copymode(path, tmp)
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def _load(self) -> Dict[str, Any]:
         path = self.settings_path()

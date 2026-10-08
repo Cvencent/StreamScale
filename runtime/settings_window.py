@@ -298,6 +298,38 @@ class SettingsWindow:
             foreground="#555555",
         ).pack(anchor="w", pady=(6, 0))
 
+        screen_row = ttk.LabelFrame(tab, text="Screen fill", padding=PAD)
+        screen_row.pack(fill="x", pady=(0, 12))
+
+        ttk.Label(
+            screen_row,
+            text="Most games are laid out for a 16:9 screen, so on a 4:3\n"
+                 "handheld they leave black bars above and below.",
+            justify="left",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(0, 8))
+
+        self.aspect_var = tk.StringVar(value=str(self.cfg.get("aspect_fill", "off")))
+        for value, label, note in (
+            ("off", "Keep the game's own shape",
+             "black bars, nothing distorted"),
+            ("expand", "Fill the screen (recommended)",
+             "no distortion, you also see more of the play area"),
+            ("stretch", "Stretch to fill exactly",
+             "no bars, but the picture is distorted"),
+        ):
+            row = ttk.Frame(screen_row)
+            row.pack(anchor="w", fill="x")
+            ttk.Radiobutton(row, text=label, variable=self.aspect_var,
+                            value=value).pack(side="left")
+            ttk.Label(row, text=f"  {note}", foreground="#888888").pack(side="left")
+
+        ttk.Label(
+            screen_row,
+            text="Works on Godot games (Brotato). Other games are left alone.",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(6, 0))
+
         pre_row = ttk.Frame(tab)
         pre_row.pack(fill="x", pady=(0, 12))
         self.preapply_var = tk.BooleanVar(value=bool(self.cfg.get("preapply", True)))
@@ -582,6 +614,7 @@ class SettingsWindow:
             self.cfg["font_scale"] = round(float(self.font_scale_var.get()), 2)
         except (tk.TclError, ValueError):
             self.cfg["font_scale"] = 1.0
+        self.cfg["aspect_fill"] = str(self.aspect_var.get() or "off")
 
         try:
             path = tray_app.save_config(self.cfg)

@@ -29,12 +29,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
-from ..adapter import JsonFileAdapter
+from ..adapter import AdapterError, ApplyResult, JsonFileAdapter
+from ..godot import OVERRIDE_NAME
+from ..godot_mixin import GodotAspectMixin
 
 
-class BrotatoAdapter(JsonFileAdapter):
+class BrotatoAdapter(GodotAspectMixin, JsonFileAdapter):
     name = "Brotato"
     aliases = ("Brotato", "土豆兄弟")
 
@@ -85,6 +87,103 @@ class BrotatoAdapter(JsonFileAdapter):
     def _missing(root: Path):
         from ..adapter import AdapterError
         return AdapterError(f"no settings.json under {root}")
+
+    # ------------------------------------------------------------------
+
+    def game_dir(self) -> Path:
+        """Where the executable lives, for the Godot aspect override.
+
+        override.cfg must sit beside the .exe -- that is where the engine
+        looks. The install path is recorded by Steam, but reading Steam's
+        library config is a lot of machinery for one string, so this checks
+        the usual locations and reports honestly when it cannot find one.
+        """
+        override = os.environ.get("STREAMSCALE_GAME_DIR")
+        if override:
+            return Path(override)
+
+        candidates: List[Path] = []
+        for drive in ("C", "D", "E", "F", "G"):
+            for lib in ("steam", "Steam", "SteamLibrary", "Games/Steam",
+                        "Program Files (x86)/Steam", "Program Files/Steam"):
+                candidates.append(
+                    Path(f"{drive}:/{lib}/steamapps/common/Brotato"))
+
+        for path in candidates:
+            try:
+                if (path / "Brotato.exe").exists():
+                    return path
+            except OSError:
+                continue
+
+        raise AdapterError(
+            "cannot locate the Brotato install directory; "
+            "set STREAMSCALE_GAME_DIR to it")
+
+    # ------------------------------------------------------------------
+    # Combined apply / revert
+    # ------------------------------------------------------------------
+
+    def apply(self) -> ApplyResult:
+        """Apply every lever this game offers.
+
+        Two independent mechanisms, deliberately kept independent: the font
+        size lives in the game's JSON settings, the aspect ratio in a Godot
+        project setting. Either can fail without taking the other down -- a
+        missing install directory must not stop the text from being enlarged.
+        """
+        results = []
+        warnings = []
+
+        font = super().apply()
+        results.append(("font", font))
+        warnings.extend(font.warnings)
+
+        try:
+            aspect = self.aspect_apply()
+            results.append(("aspect", aspect))
+            warnings.extend(aspect.warnings)
+        except AdapterError as exc:
+            warnings.append(f"aspect skipped: {exc}")
+            results.append(("aspect", ApplyResult(changed=False,
+                                                  detail=f"skipped ({exc})")))
+
+        changed = [name for name, r in results if r.changed]
+        detail = "; ".join(f"{name}: {r.detail}" for name, r in results)
+        return ApplyResult(changed=bool(changed), detail=detail, warnings=warnings)
+
+    def revert(self) -> ApplyResult:
+        results = []
+        warnings = []
+
+        font = super().revert()
+        results.append(("font", font))
+        warnings.extend(font.warnings)
+
+        try:
+            aspect = self.aspect_revert()
+            results.append(("aspect", aspect))
+            warnings.extend(aspect.warnings)
+        except AdapterError as exc:
+            warnings.append(f"aspect not restored: {exc}")
+            results.append(("aspect", ApplyResult(changed=False,
+                                                  detail=f"skipped ({exc})")))
+
+        changed = [name for name, r in results if r.changed]
+        detail = "; ".join(f"{name}: {r.detail}" for name, r in results)
+        return ApplyResult(changed=bool(changed), detail=detail, warnings=warnings)
+
+    def capabilities(self) -> List[Dict[str, Any]]:
+        """What this adapter can change, for the settings UI and logs."""
+        return [
+            {
+                "kind": "json-settings",
+                "available": True,
+                "keys": list(self.MANAGED_KEYS),
+                "target": str(self.settings_path()),
+            },
+            self.aspect_capability(),
+        ]
 
     # ------------------------------------------------------------------
 

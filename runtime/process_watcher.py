@@ -39,6 +39,10 @@ CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # want the text readable", and imperceptible in CPU terms.
 POLL_INTERVAL = 1.0
 
+#: Why the last enumeration failed, if it did. Empty means healthy. Exposed
+#: so a failure is diagnosable rather than looking like "no games running".
+last_error: str = ""
+
 
 def running_processes() -> Set[str]:
     """Return the lower-case names of all running processes.
@@ -47,28 +51,44 @@ def running_processes() -> Set[str]:
     Chinese Windows the output is GBK, and decoding it as UTF-8 raises
     UnicodeDecodeError -- which would look like the watcher is broken
     rather than like an encoding mismatch.
-    """
-    try:
-        result = subprocess.run(
-            ["tasklist", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True,
-            encoding="gbk", errors="replace",
-            creationflags=CREATE_NO_WINDOW,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return set()
 
-    names: Set[str] = set()
-    for line in (result.stdout or "").splitlines():
-        # CSV rows look like: "Brotato.exe","1234","Console","1","123,456 K"
-        line = line.strip()
-        if not line.startswith('"'):
+    Returns an empty set on failure. Callers treat "no processes" as "no
+    games running", which is safe (nothing is applied), but a transient
+    failure here is worth being able to see -- hence the optional retry and
+    the reason recorded in `last_error`.
+    """
+    global last_error
+    for attempt in range(2):
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True,
+                encoding="gbk", errors="replace",
+                creationflags=CREATE_NO_WINDOW,
+                timeout=20,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            time.sleep(0.2)
             continue
-        end = line.find('"', 1)
-        if end > 1:
-            names.add(line[1:end].lower())
-    return names
+
+        names: Set[str] = set()
+        for line in (result.stdout or "").splitlines():
+            # CSV rows look like: "Brotato.exe","1234","Console","1","123,456 K"
+            line = line.strip()
+            if not line.startswith('"'):
+                continue
+            end = line.find('"', 1)
+            if end > 1:
+                names.add(line[1:end].lower())
+
+        if names:
+            last_error = ""
+            return names
+        last_error = f"tasklist returned no parsable rows (rc={result.returncode})"
+        time.sleep(0.2)
+
+    return set()
 
 
 @dataclass

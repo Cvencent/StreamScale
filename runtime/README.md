@@ -20,6 +20,8 @@ runtime/
   _smoke_exe.py        launches the built exe and confirms the tray appears
   _e2e_exe.py          end-to-end: fake log, real exe, real detection
   _live_midstream.py   live: real exe, stand-in game process, real scaling
+  _check_godot.py      override.cfg editing safety
+  _check_crossproc.py  apply/revert across separate processes
 ```
 
 ## Build
@@ -60,9 +62,11 @@ repeatable; each cleans up after itself.
 .buildvenv\Scripts\python.exe _smoke_exe.py         REM the tray window appears
 .buildvenv\Scripts\python.exe _e2e_exe.py           REM detects a stream end to end
 .buildvenv\Scripts\python.exe _live_midstream.py    REM applies when a game launches
+.buildvenv\Scripts\python.exe _check_godot.py       REM override.cfg safety
+.buildvenv\Scripts\python.exe _check_crossproc.py   REM apply/revert across processes
 ```
 
-102 assertions across the eight checks. Two of them carry the most weight,
+191 assertions across twelve checks. Two of them carry the most weight,
 and either can pass while the packaged app is quietly broken:
 
 * `_e2e_exe.py` runs the real executable against a scratch log and asserts

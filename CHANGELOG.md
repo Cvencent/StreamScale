@@ -1,5 +1,36 @@
 # Change log
 
+## 0.5.0
+
+* **Black bars on a 4:3 screen can now be removed.** Brotato is laid out for
+  16:9 and keeps its own aspect ratio, so on a 1280x960 handheld it is
+  letterboxed. Godot reads an `override.cfg` beside the executable and lets
+  those project settings be replaced without touching the game. Verified
+  against the engine itself, not just the documentation: a probe script
+  reports `keep` without the file and `expand` with it.
+* Selectable in Settings: keep the game's shape, fill the screen at the same
+  scale (`expand`, no distortion, more play area visible), or stretch to fit
+  exactly (`ignore`, distorted).
+* The override file is **merged, not overwritten** — Brotato's ModLoader also
+  reads it, and other sections, comments and line endings are preserved
+  exactly. Reverting restores the file byte-for-byte and deletes it when we
+  created it.
+* The undo information is written to disk, because the CLI runs apply and
+  revert as separate processes; keeping it in memory meant the aspect change
+  was never undone.
+* Capabilities are composed as mixins rather than baked into one base class:
+  `GodotAspectMixin` adds aspect control to any adapter, which is what
+  supporting further games will build on.
+* Fixed: reverting rewrote settings files in a different shape (indentation
+  collapsed) because it re-serialised the parsed values. The original text is
+  now captured on apply and restored verbatim — byte-for-byte in all six
+  formatting variants tested.
+* Fixed: `show` (dry-run) wrote `override.cfg`, because the aspect step
+  ignored the dry-run flag. A dry run now touches nothing.
+* Fixed: a transient `tasklist` failure silently looked like "no processes
+  running", and the transient failure is now retried and recorded in
+  `last_error` instead of being swallowed.
+
 ## 0.4.0
 
 * **Fixed: the profile was applied too late to matter.** A game reads its

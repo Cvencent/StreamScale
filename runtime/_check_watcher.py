@@ -35,7 +35,12 @@ def main() -> int:
 
     print("\n1. Process enumeration works")
     names = process_watcher.running_processes()
-    check("found processes", len(names) > 0, f"{len(names)} processes")
+    detail = f"{len(names)} processes"
+    if not names and process_watcher.last_error:
+        # A failure here used to just say "0 processes", which is
+        # indistinguishable from a broken parser. Surface the reason.
+        detail += f"  [last_error: {process_watcher.last_error}]"
+    check("found processes", len(names) > 0, detail)
     check("names are lower case", all(n == n.lower() for n in names))
     check("includes our own interpreter",
           any("python" in n for n in names),
