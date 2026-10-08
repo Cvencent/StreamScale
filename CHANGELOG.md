@@ -1,5 +1,27 @@
 # Change log
 
+## 0.4.0
+
+* **Fixed: the profile was applied too late to matter.** A game reads its
+  settings file within milliseconds of starting, but the process list is
+  polled once a second. Measured live: the game started at 18:19:30, the
+  write landed at 18:19:33, and the game had long since loaded `font_size=1`
+  into memory — the file changed and nothing happened. The profile is now
+  applied when the stream starts, which is seconds or minutes before any
+  game launches. Set `"preapply": false` to restore the old behaviour.
+* **Fixed: a backup could not be found when reverting.** The backup filename
+  was derived from the session's app name, which differs by caller — the CLI
+  sees the Sunshine entry name, while the tray, applying ahead of any launch,
+  has no name at all. It wrote `(stream).json` and then looked for
+  `Brotato.json`. Now keyed on the adapter's own name.
+* **Fixed: a game still running at stream end could leave settings modified
+  forever.** Reverting immediately would be overwritten when the game exited
+  and wrote back its in-memory values. Such games are now restored once their
+  process actually exits.
+* New `font_scale` setting, adjustable from the Settings window with a
+  slider, for when the automatic size is still too small. Clamped to a sane
+  range so it cannot produce a HUD that covers the play area.
+
 ## 0.3.0
 
 * **Games launched from inside Steam Big Picture now work.** Press commands

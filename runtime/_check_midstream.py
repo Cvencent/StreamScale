@@ -116,6 +116,10 @@ def main() -> int:
         app._icon = None
         app._status = "active"
         app._applied = set()
+        # Games still running when a stream ends are parked here until their
+        # process exits, so their in-memory values cannot overwrite the
+        # restore. Must exist before any callback runs.
+        app._pending_release = set()
         app._monitor = None
         app._watcher = None
         app._settings_window = None

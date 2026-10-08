@@ -93,18 +93,27 @@ Press commands fire once, when a stream starts. If you reach a game through
 Steam Big Picture, that moment arrives before the game exists, so there is
 nothing to configure yet.
 
-That case is handled by the tray app, which watches for the game's process
-while a stream is running and applies the profile when it appears:
+The tray handles it by applying the profile **the moment the stream
+starts** — before any game can launch:
 
 ```
-stream starts (Steam Big Picture)  -> nothing to do yet, correctly
-you launch Brotato from Steam      -> brotato.exe appears -> profile applied
+stream starts (Steam Big Picture)  -> profile applied immediately
+you launch Brotato from Steam      -> the game reads the new value
 you close Brotato                  -> settings restored
 ```
 
-Watching only happens during a stream, so it costs nothing the rest of the
-time. Adapters declare the executable names to watch via
-`process_names`.
+Applying early is the point. A game reads its settings file within
+milliseconds of starting, while the process list is polled once a second;
+waiting to see the game means the write lands after it has already loaded
+the old value. Measured live: three seconds too late, and the write had no
+effect.
+
+Adapters declare what to watch via `process_names`.
+
+### Text is still too small
+
+Settings → General → **Text size** slider. `1.0×` means automatic; raise it
+to make text larger. Also settable as `"font_scale": 1.5` in `config.json`.
 
 ## Configuration
 

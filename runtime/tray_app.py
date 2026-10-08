@@ -35,7 +35,7 @@ import traceback
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -231,6 +231,13 @@ DEFAULT_CONFIG = {
     "max_client_width": 1600,
     "state_dir": "",
     "clients": {},
+    # Apply profiles the moment a stream starts, rather than waiting to see
+    # the game process. A game reads its settings within milliseconds of
+    # launching, which a one-second poll cannot beat. See _preapply_all.
+    "preapply": True,
+    # Multiplier applied to the computed font size, so the user can fine-tune
+    # without editing adapters. 1.0 keeps the built-in heuristic.
+    "font_scale": 1.0,
 }
 
 
@@ -274,6 +281,10 @@ class TrayApp:
         self._status = "idle"
         self._settings_window = None
         self._applied: set = set()      # games whose profile is currently applied
+        # Games still running when the stream ended. Their settings cannot be
+        # restored until they exit, or the game would write its in-memory
+        # (modified) values back over our restore.
+        self._pending_release: set = set()
 
     # -- state ---------------------------------------------------------
 
@@ -323,15 +334,99 @@ class TrayApp:
             f"res={state.resolution or '-'} app={state.app or '-'}")
         if state.streaming:
             self._set_status("active")
-            # Only worth scanning the process list while a stream is live.
+            # Apply before any game can launch. See _preapply_all for why
+            # waiting for the process is too late to be useful.
+            self._preapply_all()
             self._set_watching(True)
         else:
-            # A stream ending must undo anything we applied mid-session.
+            # The stream ending is what ends the session, so this is where
+            # everything goes back.
             self._release_all()
-            self._set_watching(False)
+            # Keep watching if a game is still running: its settings can only
+            # be restored once it exits.
+            if not self._pending_release:
+                self._set_watching(False)
             # Distinguish "never started" from "just finished": the latter is
             # worth showing in blue so the user sees the restore happened.
             self._set_status("restored" if self._status == "active" else "idle")
+
+    # -- applying profiles ---------------------------------------------
+
+    def _adapters_worth_preapplying(self):
+        """Adapters to apply at stream start, as (name, adapter) pairs.
+
+        Only games that declare `process_names` are included: those are the
+        ones reachable from inside a launcher like Steam Big Picture, where
+        the stream starts long before the game does.
+        """
+        try:
+            import sys as _sys
+            _sys.path.insert(0, str(bundle_root() / "src"))
+            from streamscale import env, registry
+        except Exception:
+            log("adapter load failed:\n" + traceback.format_exc())
+            return []
+
+        monitor_state = self._monitor.state if self._monitor else None
+        session = env.Session(
+            app_id="", app_name="(stream)",
+            client_name="", client_id="", client_unique_id="",
+            width=monitor_state.width if monitor_state else 0,
+            height=monitor_state.height if monitor_state else 0,
+            fps=0,
+        )
+        cfg = load_config()
+        state_dir = Path(cfg["state_dir"]) if cfg.get("state_dir") else None
+
+        pairs = []
+        for cls in registry.ADAPTERS:
+            if not getattr(cls, "process_names", ()):
+                continue
+            adapter = cls(session, state_dir=state_dir)
+            self._apply_font_scale(adapter, cfg)
+            pairs.append((cls.name, adapter))
+        return pairs
+
+    def _preapply_all(self) -> None:
+        """Apply every launchable game's profile as soon as the stream starts.
+
+        Why not wait for the game process
+        ---------------------------------
+        A game reads its settings file within milliseconds of starting. Our
+        process list is polled once a second, so by the time we notice the
+        game and write the file, the game has already loaded the old values
+        into memory -- the write lands but has no effect, and the game then
+        overwrites our change on exit. Observed exactly that: process started
+        at 18:19:30, the write landed at 18:19:33, and the game had already
+        read font_size=1.
+
+        Applying at stream start sidesteps the race entirely. The user spends
+        seconds or minutes in Steam before launching anything, which is ample
+        time, and there is nothing to race against.
+
+        The cost is touching config files for games the user may not play
+        this session. Those files are only read when their game launches, and
+        everything is reverted when the stream ends, so the effect is
+        invisible. Set "preapply": false in config.json to use the old
+        watch-only behaviour instead.
+        """
+        cfg = load_config()
+        if not cfg.get("enabled", True):
+            return
+        if not cfg.get("preapply", True):
+            log("preapply disabled; will only act when a game process appears")
+            return
+
+        for name, adapter in self._adapters_worth_preapplying():
+            if name in self._applied:
+                continue
+            try:
+                result = adapter.apply()
+            except Exception as exc:
+                log(f"{name}: preapply failed: {exc}")
+                continue
+            self._applied.add(name)
+            log(f"{name}: preapplied at stream start -> {result.detail}")
 
     # -- process watching ----------------------------------------------
 
@@ -400,15 +495,47 @@ class TrayApp:
             fps=0,
         )
         cfg = load_config()
-        return cls(session, state_dir=Path(cfg["state_dir"]) if cfg.get("state_dir") else None)
+        adapter = cls(session,
+                      state_dir=Path(cfg["state_dir"]) if cfg.get("state_dir") else None)
+        self._apply_font_scale(adapter, cfg)
+        return adapter
+
+    @staticmethod
+    def _apply_font_scale(adapter, cfg: dict) -> None:
+        """Fold the user's font_scale multiplier into the adapter's choice.
+
+        Lets the user fine-tune from the settings window without touching
+        adapter code. Clamped to a sane range: a value much above 3 produces
+        a HUD that covers the play area, which is worse than small text.
+        """
+        try:
+            scale = float(cfg.get("font_scale", 1.0) or 1.0)
+        except (TypeError, ValueError):
+            scale = 1.0
+        if scale == 1.0 or not hasattr(adapter, "_scaled_font_size"):
+            return
+        scale = max(0.5, min(3.0, scale))
+        original = adapter._scaled_font_size
+
+        def scaled(_current, _orig=original, _s=scale):
+            return round(_orig(_current) * _s, 2)
+
+        adapter._scaled_font_size = scaled
 
     def _on_game_started(self, game_name: str) -> None:
-        """A watched game appeared while streaming -- apply its profile."""
+        """A watched game appeared while streaming.
+
+        Usually a no-op: the profile was already applied when the stream
+        started, which is the only way to beat the game to its own settings
+        file. This path still matters when preapply is disabled, and when a
+        game is relaunched after being closed mid-stream.
+        """
         cfg = load_config()
         if not cfg.get("enabled", True):
             log(f"{game_name} started, but scaling is disabled")
             return
         if game_name in self._applied:
+            log(f"{game_name} started (profile already in place)")
             return
 
         adapter = self._game_adapter(game_name)
@@ -427,7 +554,13 @@ class TrayApp:
         self._refresh_icon()
 
     def _on_game_exited(self, game_name: str) -> None:
-        """The game closed. Put its settings back right away."""
+        """The game closed. Put its settings back.
+
+        Reverting here matters even when the stream is still running: the
+        game writes its settings file on exit using the values it loaded, so
+        without this the modified values would persist into the next desktop
+        session.
+        """
         if game_name not in self._applied:
             return
         adapter = self._game_adapter(game_name)
@@ -439,13 +572,53 @@ class TrayApp:
             log(f"{game_name}: revert failed: {exc}")
             return
         self._applied.discard(game_name)
+        self._pending_release.discard(game_name)
         log(f"{game_name} exited -> {result.detail}")
+        self._maybe_stop_watching()
 
     def _release_all(self) -> None:
-        """Undo every profile we applied, e.g. when the stream ends."""
+        """A stream ended. Undo every profile we applied.
+
+        A game that is still running is dealt with later: it holds the
+        modified values in memory and will write them back to disk when it
+        exits, so reverting now would simply be overwritten. Those games are
+        parked in `_pending_release` and reverted by _on_game_exited once
+        their process disappears, which is why the watcher is deliberately
+        left running past the end of the stream.
+        """
+        if not self._applied:
+            return
+        try:
+            import process_watcher
+            live = process_watcher.running_processes()
+        except Exception:
+            live = set()
+
         for game_name in list(self._applied):
+            adapter = self._game_adapter(game_name)
+            still_running = False
+            if adapter is not None:
+                # Read from the instance, not the class, so a per-session
+                # override is honoured and callers can substitute names.
+                procs = getattr(adapter, "process_names", ()) or ()
+                still_running = any(p.lower() in live for p in procs)
+
+            if still_running:
+                self._pending_release.add(game_name)
+                log(f"{game_name} still running at stream end; "
+                    f"will restore when it exits")
+                continue
             self._on_game_exited(game_name)
-        self._applied.clear()
+
+        if self._pending_release:
+            log(f"waiting for {sorted(self._pending_release)} to exit before restoring")
+
+    def _maybe_stop_watching(self) -> None:
+        """Stop scanning once nothing is left to watch for."""
+        if self._applied or self._pending_release:
+            return
+        if not (self._monitor and self._monitor.state.streaming):
+            self._set_watching(False)
 
     def _start_monitor(self) -> None:
         import stream_monitor

@@ -263,7 +263,55 @@ class SettingsWindow:
             tab,
             text="Turn this off to leave every game untouched.",
             foreground="#555555",
-        ).pack(anchor="w", pady=(0, 14))
+        ).pack(anchor="w", pady=(0, 12))
+
+        print_row = ttk.LabelFrame(tab, text="Text size", padding=PAD)
+        print_row.pack(fill="x", pady=(0, 12))
+
+        ttk.Label(
+            print_row,
+            text="The automatic size cannot see how large your screen physically is.",
+            foreground="#555555",
+        ).pack(anchor="w")
+        ttk.Label(
+            print_row,
+            text="If the text is still too small, raise this.",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(0, 8))
+
+        row = ttk.Frame(print_row)
+        row.pack(fill="x")
+        ttk.Label(row, text="Makes text").pack(side="left")
+        self.font_scale_var = tk.DoubleVar(value=float(self.cfg.get("font_scale", 1.0)))
+        scale = ttk.Scale(row, from_=0.5, to=2.5, orient="horizontal",
+                          variable=self.font_scale_var, command=self._on_scale_move)
+        scale.pack(side="left", fill="x", expand=True, padx=8)
+        self.font_scale_label = ttk.Label(row, text="", width=18)
+        self.font_scale_label.pack(side="left")
+        ttk.Button(row, text="Reset", command=self._reset_font_scale).pack(side="left", padx=(8, 0))
+
+        self._update_font_scale_label()
+
+        ttk.Label(
+            print_row,
+            text="1.0× = automatic. Applies the next time a stream starts.",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(6, 0))
+
+        pre_row = ttk.Frame(tab)
+        pre_row.pack(fill="x", pady=(0, 12))
+        self.preapply_var = tk.BooleanVar(value=bool(self.cfg.get("preapply", True)))
+        ttk.Checkbutton(
+            pre_row, text="Apply at stream start (recommended)", variable=self.preapply_var,
+        ).pack(anchor="w")
+        ttk.Label(
+            pre_row,
+            text="Needed for games launched from Steam, where the game starts\n"
+                 "after the stream does. Turn it off only if you do not want\n"
+                 "config files touched until a game actually launches.",
+            justify="left",
+            foreground="#555555",
+        ).pack(anchor="w", pady=(2, 0))
 
         row = ttk.Frame(tab)
         row.pack(fill="x")
@@ -275,13 +323,9 @@ class SettingsWindow:
 
         ttk.Label(
             tab,
-            text=(
-                "A 4K TV is comfortable already, so it is skipped by default.\n"
-                "Set this to match the widest client you want scaled."
-            ),
-            justify="left",
+            text="A 4K TV is comfortable already, so it is skipped by default.",
             foreground="#555555",
-        ).pack(anchor="w", pady=(2, 14))
+        ).pack(anchor="w", pady=(2, 12))
 
         ttk.Label(tab, text="Never touch these apps:").pack(anchor="w")
         box = ttk.Frame(tab)
@@ -304,6 +348,26 @@ class SettingsWindow:
         ttk.Button(add_row, text="Add", command=self._add_excluded).pack(side="left", padx=6)
         ttk.Button(add_row, text="Remove selected",
                    command=self._remove_excluded).pack(side="left")
+
+    def _on_scale_move(self, _value=None) -> None:
+        self._update_font_scale_label()
+
+    def _update_font_scale_label(self) -> None:
+        try:
+            value = float(self.font_scale_var.get())
+        except (tk.TclError, ValueError):
+            return
+        if abs(value - 1.0) < 0.02:
+            note = "  (automatic)"
+        elif value > 1.0:
+            note = "  larger"
+        else:
+            note = "  smaller"
+        self.font_scale_label.configure(text=f"{value:.2f}×{note}")
+
+    def _reset_font_scale(self) -> None:
+        self.font_scale_var.set(1.0)
+        self._update_font_scale_label()
 
     def _add_excluded(self) -> None:
         name = self.new_excluded.get().strip()
@@ -513,6 +577,11 @@ class SettingsWindow:
         self.cfg["enabled"] = bool(self.enabled_var.get())
         self.cfg["max_client_width"] = width
         self.cfg["excluded_apps"] = list(self.excluded_list.get(0, "end"))
+        self.cfg["preapply"] = bool(self.preapply_var.get())
+        try:
+            self.cfg["font_scale"] = round(float(self.font_scale_var.get()), 2)
+        except (tk.TclError, ValueError):
+            self.cfg["font_scale"] = 1.0
 
         try:
             path = tray_app.save_config(self.cfg)

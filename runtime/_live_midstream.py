@@ -123,7 +123,7 @@ def main() -> int:
               "watching for processes" in text,
               next((l for l in text.splitlines() if "watching" in l), ""))
 
-        print("\n2. Stream starts (Steam Big Picture -> no adapter matches)")
+        print("\n2. Stream starts (Steam Big Picture)")
         with open(fake_log, "a", encoding="utf-8") as fh:
             fh.write("Executing: [steam://open/bigpicture] in [\"\"]\n")
             fh.write("Client requested stream resolution (clientViewport): 1280x960\n")
@@ -131,13 +131,32 @@ def main() -> int:
 
         if not _wait_for(tray_log, "streaming=True", 30):
             check("stream detected", False, "never saw streaming=True")
-        else:
-            check("stream detected", True)
+            kill_exe()
+            return 1
+        check("stream detected", True)
 
-        before = json.loads(settings_file.read_text(encoding="utf-8"))
-        check("font_size still 1 while only Steam runs",
-              before["settings"]["font_size"] == 1,
-              f"font_size={before['settings']['font_size']}")
+        # The profile must land here, before any game launches. A game reads
+        # its settings within milliseconds of starting, which a one-second
+        # process poll cannot beat -- the earlier design wrote the file three
+        # seconds late and the game had already loaded the old value.
+        preapplied = False
+        deadline = time.time() + 25
+        while time.time() < deadline:
+            current = json.loads(settings_file.read_text(encoding="utf-8"))
+            if current["settings"]["font_size"] > 1:
+                preapplied = True
+                break
+            time.sleep(1.0)
+
+        staged = json.loads(settings_file.read_text(encoding="utf-8"))
+        check("profile applied at stream start, before the game exists",
+              preapplied, f"font_size={staged['settings']['font_size']}")
+        check("other keys preserved",
+              staged["settings"]["volume"] == SETTINGS["settings"]["volume"]
+              and staged["settings"]["language"] == "zh")
+        for line in _read(tray_log).splitlines():
+            if "preapplied" in line:
+                print(f"        {line[:140]}")
 
         print(f"\n3. Launch the game process ({target})")
         game_exe = tmp / target
@@ -157,25 +176,16 @@ def main() -> int:
             [str(game_exe), "-n", "120", "127.0.0.1"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        print("4. The tray should notice and apply the profile")
-        applied = False
-        deadline = time.time() + 40
-        while time.time() < deadline:
-            current = json.loads(settings_file.read_text(encoding="utf-8"))
-            if current["settings"]["font_size"] > 1:
-                applied = True
-                break
-            time.sleep(1.5)
-
-        final = json.loads(settings_file.read_text(encoding="utf-8"))
-        check("font_size raised automatically", applied,
-              f"font_size={final['settings']['font_size']}")
-        check("other keys preserved",
-              final["settings"]["volume"] == SETTINGS["settings"]["volume"]
-              and final["settings"]["language"] == "zh")
+        print("4. The game finds the profile already in place")
+        time.sleep(6)
+        running = json.loads(settings_file.read_text(encoding="utf-8"))
+        check("still applied while the game runs",
+              running["settings"]["font_size"] > 1,
+              f"font_size={running['settings']['font_size']}")
         for line in _read(tray_log).splitlines():
-            if "started ->" in line or "exited ->" in line:
+            if "started" in line and "profile already" in line:
                 print(f"        {line}")
+                break
 
         print("\n5. Closing the game restores the settings")
         game_proc.terminate()
@@ -197,6 +207,9 @@ def main() -> int:
         check("font_size restored on exit", restored,
               f"font_size={end['settings']['font_size']}")
         check("file identical to the original", end == SETTINGS)
+        for line in _read(tray_log).splitlines():
+            if "exited ->" in line:
+                print(f"        {line[:140]}")
 
         print("\n6. Clean up")
         kill_exe()

@@ -91,7 +91,20 @@ class GameAdapter(ABC):
 
     @property
     def backup_path(self) -> Path:
-        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in self.session.app_name)
+        """Where the pre-apply state is parked.
+
+        Keyed on the adapter's own name rather than the session's app_name.
+        The session name varies by caller -- the CLI sees the Sunshine entry
+        ("Brotato", "土豆兄弟"), while the tray, applying ahead of any game
+        launch, has no game name at all. Using it meant the tray wrote
+        "(stream).json" and then looked for "Brotato.json" when reverting,
+        so the restore silently found nothing.
+
+        The adapter name is the same regardless of how the game was reached,
+        and two Sunshine entries pointing at the same game should share one
+        backup anyway, since only one can run at a time.
+        """
+        safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in self.name)
         return self.state_dir / f"{safe}.json"
 
     def save_backup(self, state: Dict[str, Any]) -> None:
