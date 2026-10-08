@@ -54,6 +54,19 @@ streamscale.bat show
 确认无误后，把打印出的 `prep-cmd` 填进 Sunshine 后台对应应用里
 （Applications → 你的应用 → Prep Commands）。
 
+### 或者用托盘程序
+
+从 [Releases 页面](https://github.com/Cvencent/StreamScale/releases) 下载
+`StreamScale.exe`，双击即可。它会常驻通知区域，并提供一个设置窗口——
+可以改配置、也能**一键把预处理命令写进 `apps.json`**
+（这一步原本最繁琐，现在点一下 Install 就行）。
+
+托盘程序是配套工具，不是必需品：**关掉它，缩放功能照常工作。**
+状态含义表、右键菜单逐项说明、排障表见
+[StreamScale-托盘程序说明.md](StreamScale-托盘程序说明.md)。
+
+想自己构建见 [runtime/README.md](runtime/README.md)。
+
 ## 识别原理
 
 Sunshine 会向它启动的进程注入环境变量。StreamScale 只需要其中几个：

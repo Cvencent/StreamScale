@@ -57,6 +57,21 @@ streamscale.bat show
 Once that looks right, add the printed `prep-cmd` to your app in the
 Sunshine web UI (Applications → your app → Prep Commands).
 
+### Or use the tray app
+
+Download `StreamScale.exe` from the
+[Releases page](https://github.com/Cvencent/StreamScale/releases) and
+double-click it. A tray icon appears with a Settings window that edits the
+config and installs the press commands into `apps.json` for you — the
+fiddliest step, done by clicking Install.
+
+The tray is a companion, not a requirement: **the scaling hooks keep
+working when it is closed.** See
+[StreamScale-托盘程序说明.md](StreamScale-托盘程序说明.md) for the status
+colour table, every menu item, and a troubleshooting table (in Chinese).
+
+To build it yourself, see [runtime/README.md](runtime/README.md).
+
 ## How detection works
 
 Sunshine injects environment variables into the process it launches. Two
