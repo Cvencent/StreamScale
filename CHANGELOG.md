@@ -1,6 +1,24 @@
 # Change log
 
+## 0.7.3
+
+* **Fixed: running the checks broke autostart.** `_check_autostart.py`
+  recorded only *whether* autostart was on, then restored it by calling
+  `set_autostart(True)` — which builds the command from the running process.
+  Run from a checkout that is `pythonw.exe tray_app.py`, so a working install
+  pointing at `StreamScale.exe` came back pointing at the source tree. The
+  entry still read as "enabled", so the check passed while quietly breaking
+  autostart. The original command is now captured and written back verbatim,
+  and the round-trip is wrapped so a failure cannot leave it changed.
+
+* **Autostart prefers the installed build even when run from source.**
+  `_command_path()` returns the source invocation only when no installed copy
+  exists. An autostart entry outlives the run that created it, so pointing it
+  at a source tree is a break waiting for the tree to move — which is exactly
+  what happened here, twice.
+
 ## 0.7.2
+
 
 * **Fixed: font changes went to a file the game never reads.** There are two
   `settings.json` files under `%APPDATA%/Brotato`:

@@ -40,7 +40,7 @@ t = i18n.t
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.7.2"
+APP_VERSION = "0.7.3"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -196,9 +196,22 @@ class SingleInstance:
 # ----------------------------------------------------------------------
 
 def _command_path() -> str:
+    """The command Windows should run at logon.
+
+    Prefers the installed executable. Run from a checkout there is no such
+    file, and the source is used instead -- but only when that is the only
+    option, because an autostart entry outlives the run that created it and
+    a path into a source tree breaks the moment the tree moves.
+    """
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
-    # Running from source: prefer pythonw so no console flashes on boot.
+
+    installed = _installed_exe()
+    if installed.exists():
+        return f'"{installed}"'
+
+    # No installed build to point at. Record the source, which at least
+    # works today; the entry is repaired on the next real install.
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     exe = pythonw if pythonw.is_file() else Path(sys.executable)
     return f'"{exe}" "{Path(__file__).resolve()}"'
