@@ -18,7 +18,9 @@ import ctypes
 import ctypes.wintypes as wt
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -44,6 +46,9 @@ def _locate_exe() -> Path:
 
 
 EXE = _locate_exe()
+
+sys.path.insert(0, str(HERE))
+from _testenv import isolated_env, self_install_record  # noqa: E402
 user32 = ctypes.windll.user32
 
 # pystray's Win32 backend names its window class "<something>SystemTrayIcon".
@@ -100,9 +105,19 @@ def main() -> int:
         print(f"        (leftover: {before})")
 
     print("\n2. Launch the EXE")
+    # Run the copy against a temporary environment, and tell it that it *is*
+    # the installation. Without the record it concludes it is a package
+    # someone opened, compared against the real install, and exits instead
+    # of showing a tray -- so the check would fail for a reason that has
+    # nothing to do with what it is testing.
+    tmp = Path(tempfile.mkdtemp())
+    env = isolated_env(tmp)
+    self_install_record(tmp, EXE)
+
     proc = subprocess.Popen(
         [str(EXE)],
         cwd=str(EXE.parent),
+        env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     print(f"  launched (extractor pid={proc.pid}; real pid differs in onefile mode)")

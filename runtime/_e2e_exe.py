@@ -48,6 +48,9 @@ def _locate_exe() -> Path:
 
 
 EXE = _locate_exe()
+
+sys.path.insert(0, str(HERE))
+from _testenv import isolated_env, self_install_record  # noqa: E402
 user32 = ctypes.windll.user32
 WNDENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
 
@@ -98,9 +101,13 @@ def main() -> int:
         time.sleep(1.5)
 
         print("\n2. Start the EXE against the scratch log")
-        env = dict(os.environ)
-        env["STREAMSCALE_SUNSHINE_LOG"] = str(fake_log)
+        # A full temporary environment: APPDATA so nothing real is written,
+        # and an install record naming this exe so it does not mistake itself
+        # for a package opened from elsewhere and exit without a tray.
+        isolated = Path(tempfile.mkdtemp())
+        env = isolated_env(isolated, sunshine_log=fake_log)
         env["STREAMSCALE_LOG_DIR"] = str(log_dir)
+        self_install_record(isolated, EXE)
 
         proc = subprocess.Popen([str(EXE)], cwd=str(EXE.parent), env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

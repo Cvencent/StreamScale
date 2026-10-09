@@ -97,3 +97,34 @@ def real_game_settings() -> Path:
     """
     appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
     return Path(appdata) / "Brotato"
+
+def self_install_record(tmp: Path, exe: Path) -> Path:
+    """Make a launched copy believe it *is* the installation.
+
+    Every start asks "am I the installed build, or a package someone opened?"
+    and an unanswered question has consequences: a copy that thinks it is an
+    upgrade candidate either installs itself somewhere or exits to avoid
+    downgrading. Either way it does not show a tray, which is what the
+    behaviour checks are trying to observe.
+
+    Writing the record so it names the executable under test removes the
+    ambiguity, and keeps the check focused on the behaviour it means to test
+    rather than on the update logic.
+
+    Returns the path of the record written.
+    """
+    import json
+
+    appdata = Path(env_appdata(tmp))
+    target = Path(exe).resolve()
+    record = appdata / "StreamScale" / "install.json"
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(json.dumps({"exe": str(target),
+                                  "folder": str(target.parent)}, indent=2),
+                      encoding="utf-8")
+    return record
+
+
+def env_appdata(tmp: Path) -> Path:
+    """The APPDATA that isolated_env() would use for this temporary root."""
+    return Path(tmp) / "appdata"

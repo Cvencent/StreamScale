@@ -1,6 +1,38 @@
 # Change log
 
+## 0.6.2
+
+* **Fixed: the tray could fail to appear at all.** Every start asks "am I the
+  installed build, or a package someone just opened?" An earlier version
+  answered by comparing where the process runs from against the *recorded*
+  install path, and treated any difference as an upgrade attempt. The
+  recorded path pointed at a build output directory that still existed, so
+  every launch looked like "install this build over that one", the versions
+  matched, and the process exited without showing anything. Reported as
+  simply "your icon is not there".
+
+  The question is now whether the running copy *is* the installation — the
+  same file, or the same folder in an onedir layout — which a stale record
+  cannot confuse. A copy that is already installed no longer touches the
+  update path at all.
+
+* **Fixed: the black bars were never actually removed.** The screen-fill
+  setting defaults to off, and a config file written before the setting
+  existed has no key for it, so the default applied and nothing changed.
+  Saving from Settings would have added it; the defaults are now merged in
+  on read, so an older config picks up new settings without the user having
+  to open the window.
+
+* The self-checks now give a launched copy a temporary environment *and* an
+  install record naming itself. Without the record it decided it was an
+  upgrade candidate and exited, so checks failed for a reason unrelated to
+  what they were testing — the same confusion as the first bug above.
+
+* A start that finds no installation anywhere no longer exits silently; it
+  starts normally, since a tray is more useful than nothing.
+
 ## 0.6.1
+
 
 * **The exe now works as a Sunshine prep-command, wherever it sits.** It
   understands `apply` / `revert` / `show` itself, so the batch launcher is no

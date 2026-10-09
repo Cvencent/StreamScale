@@ -35,7 +35,7 @@ import traceback
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.6.2"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -808,6 +808,23 @@ def _install_record_path() -> Path:
     return config_dir() / "install.json"
 
 
+def _notify_upgrade_declined(installed: Path, new_version: str, old_version: str) -> None:
+    """Tell the user a package was opened but the installed build is current.
+
+    Only reached when the process really is running from outside the install
+    location -- not on an ordinary launch.
+    """
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            f"You are opening {APP_NAME} {new_version}, but {old_version} "
+            f"is already installed.\n\n"
+            f"Nothing was changed.\n\nInstalled at:\n{installed}",
+            f"{APP_NAME} - no upgrade needed", 0x40)
+    except Exception:
+        pass
+
+
 def record_install_path(exe: Path | None = None) -> None:
     """Remember where this app lives, for the next upgrade to find.
 
@@ -817,20 +834,34 @@ def record_install_path(exe: Path | None = None) -> None:
     the user enabled it, so a dedicated record covers the rest.
 
     Both the executable and its containing folder are stored. The folder is
-    what an upgrade actually replaces in an onedir layout, and it survives a
-    build that moves the exe to a different depth.
+    what an upgrade actually replaces in an onedir layout.
+
+    Only written when the record would change, so a normal start does not
+    touch the file every time.
     """
     import json
+
     target = exe or (Path(sys.executable).resolve()
                      if getattr(sys, "frozen", False) else None)
     if target is None:
         return
+    target = Path(target).resolve()
+
+    path = _install_record_path()
+    payload = {"exe": str(target), "folder": str(target.parent)}
+
     try:
-        path = _install_record_path()
+        if path.exists():
+            existing = json.loads(path.read_text(encoding="utf-8"))
+            if (existing.get("exe") == payload["exe"]
+                    and existing.get("folder") == payload["folder"]):
+                return          # already correct; leave the file alone
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+
+    try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"exe": str(target),
-                                    "folder": str(target.parent)}, indent=2),
-                        encoding="utf-8")
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     except OSError:
         pass
 
@@ -913,6 +944,20 @@ def maybe_self_update() -> int | None:
     Returns an exit code when this process should stop (the upgrade ran, and
     the freshly installed copy was launched in its place), or None to carry
     on starting normally.
+
+    An important distinction
+    ------------------------
+    This runs on *every* start, so it must recognise the ordinary case --
+    launching the installed copy -- and get out of the way. An earlier
+    version compared "where I am running from" against "the recorded install
+    path" and treated any difference as an upgrade attempt. That broke normal
+    startup: while the build output still existed, the record pointed at it,
+    every launch looked like "install this build over that one", the versions
+    matched, and the process exited without ever showing a tray. The user's
+    report was simply "your icon is not there".
+
+    The reliable question is whether the running copy *is* the installation.
+    Comparing that one fact cannot be confused by a stale record.
     """
     if not getattr(sys, "frozen", False):
         return None
@@ -923,11 +968,13 @@ def maybe_self_update() -> int | None:
     except Exception:
         return None
 
-    if running == installed:
+    # Same file, or the same folder in an onedir layout: this is a normal
+    # start of the installed copy, not an upgrade.
+    if running == installed or running.parent == installed.parent:
         return None
 
-    # Running from somewhere else. Is this a newer build, or is the user
-    # holding an old download?
+    # Running from somewhere else. Is this a newer build to install, or a
+    # stray copy the user happens to have opened?
     try:
         import updater
     except Exception:
@@ -937,7 +984,9 @@ def maybe_self_update() -> int | None:
     old_version = updater.read_exe_version(installed)
 
     if not installed.exists():
-        log(f"no installation found at {installed}; nothing to upgrade")
+        # Nothing to replace. Treat as an ordinary start so the user still
+        # gets a tray rather than silence.
+        log(f"no installation found at {installed}; starting normally")
         return None
 
     if old_version is None:
@@ -945,17 +994,8 @@ def maybe_self_update() -> int | None:
         # build as newer: it is the one that has version information at all.
         log(f"installed copy has no version resource; assuming {new_version} is newer")
     elif updater.compare_versions(new_version, old_version) <= 0:
-        detail = (f"{new_version} is not newer than the installed {old_version}")
-        log(f"upgrade declined: {detail}")
-        try:
-            ctypes.windll.user32.MessageBoxW(
-                None,
-                f"You are opening {APP_NAME} {new_version}, but {old_version} "
-                f"is already installed.\n\n"
-                f"Nothing was changed.\n\nInstalled at:\n{installed}",
-                f"{APP_NAME} - no upgrade needed", 0x40)
-        except Exception:
-            pass
+        log(f"upgrade declined: {new_version} is not newer than {old_version}")
+        _notify_upgrade_declined(installed, new_version, old_version)
         return 0
 
     log(f"upgrading {installed} from {old_version or 'unknown'} to {new_version}")
