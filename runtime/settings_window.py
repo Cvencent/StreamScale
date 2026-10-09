@@ -458,7 +458,10 @@ class SettingsWindow:
         row.pack(fill="x")
         ttk.Label(row, text=t("general.text_makes")).pack(side="left")
         self.font_scale_var = tk.DoubleVar(value=float(self.cfg.get("font_scale", 1.0)))
-        scale = ttk.Scale(row, from_=0.5, to=2.5, orient="horizontal",
+        # Matches FONT_SCALE_MAX in the CLI. Offering less than the code
+        # allows would leave a range the user cannot reach from the
+        # interface, and offering more would silently clamp.
+        scale = ttk.Scale(row, from_=0.5, to=3.0, orient="horizontal",
                           variable=self.font_scale_var, command=self._on_scale_move)
         scale.pack(side="left", fill="x", expand=True, padx=8)
         self.font_scale_label = ttk.Label(row, text="", width=18)
@@ -558,17 +561,37 @@ class SettingsWindow:
         self._update_font_scale_label()
 
     def _update_font_scale_label(self) -> None:
+        """Show the multiplier and what it actually produces.
+
+        The multiplier alone was ambiguous -- "1.75" reads as a font size
+        rather than a factor applied to one, which is the opposite of what it
+        is. Showing the resulting size as well removes the guesswork: this is
+        the number that ends up in the game's settings file.
+        """
         try:
             value = float(self.font_scale_var.get())
         except (tk.TclError, ValueError):
             return
+
         if abs(value - 1.0) < 0.02:
-            note = "  (automatic)"
-        elif value > 1.0:
-            note = "  larger"
+            key = "general.text_label_auto"
         else:
-            note = "  smaller"
-        self.font_scale_label.configure(text=f"{value:.2f}×{note}")
+            key = "general.text_label"
+
+        # The automatic base depends on the client's resolution, which is not
+        # known until a stream starts, so a typical handheld value is used to
+        # make the effect concrete.
+        try:
+            import streamscale.cli as cli_mod
+
+            base = 1.75
+            estimate = round(base * max(cli_mod.FONT_SCALE_MIN,
+                                        min(cli_mod.FONT_SCALE_MAX, value)), 2)
+            note = t("general.text_estimate", size=f"{estimate:.2f}")
+        except Exception:
+            note = ""
+
+        self.font_scale_label.configure(text=t(key, value=value) + note)
 
     def _reset_font_scale(self) -> None:
         self.font_scale_var.set(1.0)

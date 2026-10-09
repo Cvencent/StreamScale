@@ -47,3 +47,27 @@ def setup(verbose: bool = False, log_path: Optional[Path] = None) -> logging.Log
     sh.setFormatter(fmt)
     logger.addHandler(sh)
     return logger
+
+
+def close_handlers(logger: Optional[logging.Logger] = None) -> None:
+    """Flush and close the file handlers.
+
+    Worth doing explicitly rather than leaving to interpreter shutdown. The
+    log file stays locked while its handle is open, which breaks any attempt
+    to clean up the directory holding it -- and on Windows a locked file
+    cannot be deleted at all, so the cleanup fails with a permission error
+    that looks like a bug in whatever was doing the cleaning.
+
+    Silent about failures: closing a log is never worth raising over.
+    """
+    target = logger or logging.getLogger("streamscale")
+    for handler in list(target.handlers):
+        try:
+            handler.flush()
+        except Exception:
+            pass
+        try:
+            handler.close()
+        except Exception:
+            pass
+        target.removeHandler(handler)

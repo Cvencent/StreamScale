@@ -46,6 +46,25 @@ class Config:
     # Extra log verbosity.
     verbose: bool = False
 
+    # Multiplier applied on top of the adapter's own font-size heuristic, so
+    # the settings window can fine-tune without touching adapter code.
+    # 1.0 keeps the heuristic as-is.
+    #
+    # This lives here, not in the tray, because the process that actually
+    # applies a profile is the one Sunshine launches as a prep-command -- a
+    # separate invocation that never loads the tray. Keeping it in the tray
+    # meant the slider wrote a value nothing read, so dragging it did
+    # nothing at all.
+    font_scale: float = 1.0
+
+    # How to handle a game whose layout does not match the client's shape:
+    #   "off"     - leave the game's own aspect alone (black bars)
+    #   "expand"  - enlarge the render area at the same scale: fills the
+    #               screen, adds visible play area, no cropping or distortion
+    #   "stretch" - scale to fill exactly, which distorts the image
+    # Read by the same process as font_scale, for the same reason.
+    aspect_fill: str = "off"
+
     # ------------------------------------------------------------------
 
     @classmethod

@@ -159,6 +159,15 @@ time.sleep(1.5)
 
 print()
 print("=== 6. 下次启动清理旧文件夹 ===")
+# Wait for the copy started in step 5 to be fully gone. Terminating the
+# process we hold is not enough: the loader may have spawned a child under
+# the same name, and while either is alive the old folder cannot be removed.
+_sweep_stale_trays()
+for _ in range(10):
+    if not updater.running_from_root(installed, "StreamScale.exe"):
+        break
+    time.sleep(1.0)
+
 # clean_up_previous_image looks beside sys.executable.
 real_exe, real_frozen = sys.executable, getattr(sys, "frozen", False)
 try:

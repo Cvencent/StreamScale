@@ -1,6 +1,46 @@
 # Change log
 
+## 0.7.1
+
+* **Fixed: the text-size slider did nothing.** The one control the settings
+  window exists for was a no-op, and the measurement showed it plainly:
+
+  ```
+  font_scale=1.0  ->  font_size=1.75
+  font_scale=1.4  ->  font_size=1.75
+  font_scale=2.0  ->  font_size=1.75
+  ```
+
+  The multiplier was stored in the config and applied by the tray, but the
+  process that actually writes a game's settings is the one Sunshine launches
+  as a prep-command — a separate invocation that never loads the tray's code.
+  So the slider wrote a value nothing read. Reported as "I dragged it to 1.75
+  and nothing changed", with nothing in the log to explain why.
+
+  The logic now lives in one place both paths call, and the log records the
+  multiplier whenever it is applied. Verified end to end on both paths: a
+  handheld at 1280 wide gets a base of 1.75, so 1.4 lands at 2.45.
+
+  This also caught a smaller mismatch: the slider topped out at 2.5 while the
+  code allowed 3.0, leaving a range unreachable from the interface.
+
+* **The slider shows what it produces.** It displayed the multiplier alone —
+  "1.75" — which reads as a font size rather than a factor applied to one.
+  It now shows both, e.g. `1.40x (on top of automatic) -> about 2.45 in the
+  game`, since seeing the result is the point of the control.
+
+* **Fixed: the log file was never closed.** Its handle stayed open until the
+  process was torn down, which locks the file: any attempt to clean up the
+  directory holding it fails with a permission error on Windows, and the
+  error points at the cleaner rather than the leaker. Handlers are closed
+  explicitly now.
+
+* Fixed: a `font_scale` of 0, or a negative value, was treated as a request
+  to shrink text to the minimum. It is treated as "not set" instead — a
+  zero font size is not something anyone wants.
+
 ## 0.7.0
+
 
 * **The interface is available in Chinese and English.** Chosen from
   Settings, applied immediately, and remembered. Nothing had to be set up:

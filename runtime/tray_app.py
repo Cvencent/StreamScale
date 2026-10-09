@@ -40,7 +40,7 @@ t = i18n.t
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.7.1"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -520,48 +520,30 @@ class TrayApp:
         return adapter
 
     @staticmethod
-    def _apply_aspect_choice(adapter, cfg: dict) -> None:
-        """Fold the user's aspect preference into the adapter's behaviour.
-
-        The mapping from preference to Godot value lives here rather than in
-        the adapter, so the setting stays a user-facing choice ("fill the
-        screen" / "stretch") instead of leaking engine vocabulary into every
-        adapter that supports it.
-        """
-        choice = str(cfg.get("aspect_fill", "off") or "off").lower()
-        if not hasattr(adapter, "aspect_key"):
-            return
-
-        if choice in ("off", "none", "keep", ""):
-            adapter.aspect_key = None
-        elif choice in ("expand", "fill"):
-            adapter.aspect_key = "window/stretch/aspect"
-            adapter.aspect_stream_value = "expand"
-        elif choice in ("stretch", "ignore"):
-            adapter.aspect_key = "window/stretch/aspect"
-            adapter.aspect_stream_value = "ignore"
-
-    @staticmethod
     def _apply_font_scale(adapter, cfg: dict) -> None:
         """Fold the user's font_scale multiplier into the adapter's choice.
 
-        Lets the user fine-tune from the settings window without touching
-        adapter code. Clamped to a sane range: a value much above 3 produces
-        a HUD that covers the play area, which is worse than small text.
+        Delegates to the shared implementation so the tray and the
+        prep-command cannot drift apart. They did once: the tray applied the
+        multiplier while the command Sunshine actually runs ignored it, so
+        moving the slider had no effect on a stream and nothing said why.
         """
-        try:
-            scale = float(cfg.get("font_scale", 1.0) or 1.0)
-        except (TypeError, ValueError):
-            scale = 1.0
-        if scale == 1.0 or not hasattr(adapter, "_scaled_font_size"):
-            return
-        scale = max(0.5, min(3.0, scale))
-        original = adapter._scaled_font_size
+        from streamscale.cli import apply_font_scale
 
-        def scaled(_current, _orig=original, _s=scale):
-            return round(_orig(_current) * _s, 2)
+        applied = apply_font_scale(adapter, cfg.get("font_scale", 1.0))
+        if applied is not None:
+            log(f"font size will be scaled by {applied:.2f}x")
 
-        adapter._scaled_font_size = scaled
+    @staticmethod
+    def _apply_aspect_choice(adapter, cfg: dict) -> None:
+        """Fold the user's aspect preference into the adapter's behaviour.
+
+        Delegates to the shared implementation, for the same reason as
+        _apply_font_scale.
+        """
+        from streamscale.cli import apply_aspect_choice
+
+        apply_aspect_choice(adapter, cfg.get("aspect_fill", "off"))
 
     def _on_game_started(self, game_name: str) -> None:
         """A watched game appeared while streaming.

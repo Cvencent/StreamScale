@@ -22,6 +22,89 @@ from .adapter import AdapterError
 log = log_mod.setup()
 
 
+# Clamping bounds for the user's multiplier. Above about 3 the HUD covers the
+# play area, which is worse than small text; below 0.5 it is unreadable.
+FONT_SCALE_MIN = 0.5
+FONT_SCALE_MAX = 3.0
+
+
+def apply_font_scale(adapter, scale) -> Optional[float]:
+    """Fold the user's multiplier into the adapter's font-size choice.
+
+    Returns the multiplier actually applied, or None when there was nothing
+    to do -- which the caller logs, since "I moved the slider and nothing
+    happened" is otherwise impossible to diagnose from the log.
+
+    Wrapping the adapter's method rather than replacing its return value is
+    what makes this work for any adapter: each one computes its size from
+    whatever it knows (resolution, client, its own defaults), and the
+    multiplier is applied to that result.
+    """
+    try:
+        value = float(scale)
+    except (TypeError, ValueError):
+        return None
+
+    # Zero, or anything that is not a positive number, means "not set". It
+    # cannot mean "scale to nothing": a zero font size is not a readable
+    # outcome, and a config written by an older version has no business
+    # shrinking text to half size because the field defaulted to 0.
+    if not value or value <= 0:
+        return None
+
+    if abs(value - 1.0) < 1e-9 or not hasattr(adapter, "_scaled_font_size"):
+        return None
+
+    value = max(FONT_SCALE_MIN, min(FONT_SCALE_MAX, value))
+    original = adapter._scaled_font_size
+
+    def scaled(current, _original=original, _factor=value):
+        # _original may be a bound method or a plain callable, depending on
+        # whether the adapter or a per-client override installed it.
+        try:
+            base = _original(current)
+        except TypeError:
+            base = _original
+        try:
+            return round(float(base) * _factor, 2)
+        except (TypeError, ValueError):
+            return base
+
+    adapter._scaled_font_size = scaled
+    return value
+
+
+def apply_aspect_choice(adapter, choice) -> Optional[str]:
+    """Pass the user's screen-fill preference to an adapter that supports it.
+
+    The mapping from preference to engine value lives here rather than in the
+    adapter, so the setting stays a user-facing choice ("fill the screen")
+    instead of leaking engine vocabulary into every adapter that supports it.
+
+    Adapters without an `aspect_key` are left alone: the setting is about how
+    a 16:9 layout sits on a 4:3 screen, and a game that already fills it has
+    nothing to fix.
+
+    Returns the preference applied, or None.
+    """
+    if not hasattr(adapter, "aspect_key"):
+        return None
+
+    text = str(choice or "off").strip().lower()
+    if text in ("expand", "fill"):
+        adapter.aspect_key = "window/stretch/aspect"
+        adapter.aspect_stream_value = "expand"
+        return "expand"
+    if text in ("stretch", "ignore"):
+        adapter.aspect_key = "window/stretch/aspect"
+        adapter.aspect_stream_value = "ignore"
+        return "stretch"
+
+    # "off" and anything unrecognised: leave the game's own aspect alone.
+    adapter.aspect_key = None
+    return None
+
+
 def _resolve_adapter(session, cfg, dry_run: bool):
     """Find the adapter for this session, honouring config exclusions.
 
@@ -66,7 +149,17 @@ def cmd_apply(args) -> int:
     override = cfg.override_for(session.client_name, "brotato_font_size")
     if override is not None and hasattr(adapter, "_scaled_font_size"):
         adapter._scaled_font_size = lambda _cur, v=float(override): v
-        log.info("apply: using per-client font_size override %s", override)
+        log.info("apply: using per-client font-size override %s", override)
+    else:
+        # No exact override, so fold in the user's global multiplier.
+        # This is the value the settings slider writes, and it has to be
+        # applied here rather than in the tray: Sunshine runs this command
+        # as a separate process, which never loads the tray's code.
+        applied = apply_font_scale(adapter, cfg.font_scale)
+        if applied is not None:
+            log.info("apply: font size scaled by %.2f (from settings)", applied)
+
+    apply_aspect_choice(adapter, cfg.aspect_fill)
 
     try:
         result = adapter.apply()
@@ -186,6 +279,12 @@ def main(argv: Optional[list] = None) -> int:
         return args.func(args)
     except KeyboardInterrupt:
         return 130
+    finally:
+        # Release the log file. It stays locked while the handle is open,
+        # which stops the directory being cleaned up afterwards -- and a
+        # locked file cannot be deleted on Windows at all, so cleanup fails
+        # with a permission error that looks like the cleaner's fault.
+        log_mod.close_handlers()
 
 
 if __name__ == "__main__":

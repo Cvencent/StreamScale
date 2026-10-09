@@ -239,6 +239,17 @@ def main() -> int:
         cfg["font_scale"] = 1.0
         tray_app.save_config(cfg)
 
+        # Close the log before leaving the temporary directory, or its
+        # handle keeps the file locked and the cleanup fails with a
+        # permission error. Importing tray_app opens it, and nothing else
+        # closes it: this process is the last user.
+        try:
+            from streamscale import log as log_mod
+
+            log_mod.close_handlers()
+        except Exception:
+            pass
+
     if real_appdata is None:
         os.environ.pop("APPDATA", None)
     else:
