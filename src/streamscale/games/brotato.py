@@ -36,6 +36,16 @@ from ..godot import OVERRIDE_NAME
 from ..godot_mixin import GodotAspectMixin
 
 
+def _looks_like_steam_id(name: str) -> bool:
+    """Whether a directory name is a Steam ID, e.g. 76561198139548430.
+
+    Steam IDs are 17-digit numbers beginning 7656119. Checked by shape rather
+    than by a fixed length, since both 32-bit and 64-bit forms appear in
+    practice.
+    """
+    return name.isdigit() and name.startswith("7656119")
+
+
 class BrotatoAdapter(GodotAspectMixin, JsonFileAdapter):
     name = "Brotato"
     aliases = ("Brotato", "土豆兄弟")
@@ -58,12 +68,27 @@ class BrotatoAdapter(GodotAspectMixin, JsonFileAdapter):
     # ------------------------------------------------------------------
 
     def settings_path(self) -> Path:
-        """Find the settings.json, discovering the Steam ID directory.
+        """Find the settings.json the game actually reads.
 
-        Layout is %APPDATA%/Brotato/<steamid>/settings.json. Rather than
-        guess the Steam ID, scan for the directory that actually contains
-        the file. Falls back to the newest match if several exist (e.g. the
-        user switched Steam accounts).
+        Layout is %APPDATA%/Brotato/<steamid>/settings.json. The Steam ID is
+        not guessed; the directory holding a settings.json is discovered.
+
+        Choosing between candidates
+        ---------------------------
+        There is more than one directory with a settings.json, and picking the
+        wrong one means every write is silently discarded -- the file is real,
+        the write succeeds, and the game never looks at it. Observed exactly
+        that: writes landed in `user/`, which belongs to the mod loader, while
+        the game reads `<steamid>/`.
+
+        So a Steam ID directory (`7656119...`) wins, because that is the one
+        the game names in its own log:
+
+            ProgressData: Saved current profile id 0 to
+                user://76561198139548430/settings.json
+
+        Only when no such directory exists does mtime decide, which covers a
+        hypothetical layout without a Steam ID.
         """
         # expandvars must happen here, not at import time: %APPDATA% is
         # resolved per-invocation, and tests point it at a temp directory.
@@ -79,8 +104,16 @@ class BrotatoAdapter(GodotAspectMixin, JsonFileAdapter):
                       if p.is_dir() and (p / "settings.json").exists()]
         if not candidates:
             raise self._missing(root)
+
         if len(candidates) > 1:
+            steam_id = [p for p in candidates
+                        if _looks_like_steam_id(p.parent.name)]
+            if steam_id:
+                candidates = steam_id
+            # Newest first, so a user who switched Steam accounts gets the
+            # one they most recently played on.
             candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
         return candidates[0]
 
     @staticmethod

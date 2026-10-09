@@ -99,6 +99,7 @@ ENGLISH: Dict[str, str] = {
     "general.text_label_auto": "{value:.2f}x  (automatic)",
     "general.text_label": "{value:.2f}x  (on top of automatic)",
     "general.text_estimate": "  \u2192 about {size} in the game",
+    "general.text_saved": "   \u2713 saved",
     "general.fill_title": "Screen fill",
     "general.fill_note": (
         "Most games are laid out for a 16:9 screen, so on a 4:3\n"
@@ -256,6 +257,7 @@ CHINESE: Dict[str, str] = {
     "general.text_label_auto": "{value:.2f}x（自动）",
     "general.text_label": "{value:.2f}x（在自动值基础上再放大）",
     "general.text_estimate": "  \u2192 游戏里约为 {size}",
+    "general.text_saved": "   \u2713 已保存",
     "general.fill_title": "铺满屏幕",
     "general.fill_note": (
         "多数游戏是按 16:9 排版的，所以在 4:3 的掌机上\n"

@@ -1,6 +1,39 @@
 # Change log
 
+## 0.7.2
+
+* **Fixed: font changes went to a file the game never reads.** There are two
+  `settings.json` files under `%APPDATA%/Brotato`:
+
+  ```
+  <steamid>/settings.json    the one the game opens
+  user/settings.json         the mod loader's
+  ```
+
+  The adapter picked the newest by modification time, and `user/` was usually
+  the newer of the two, so every write landed in a file the game ignores.
+  Nothing looked wrong: the write succeeded, the value was correct in the file
+  that was written, and the log reported a profile applied. The only symptom
+  was the one reported — the text size never changed, whatever the slider said.
+
+  The game names its own file in its log, which is where the answer came from:
+
+  ```
+  ProgressData: Saved current profile id 0 to
+      user://76561198139548430/settings.json
+  ```
+
+  A Steam ID directory now takes precedence, and modification time only
+  decides between candidates of the same kind.
+
+* **The text-size slider saves when you let go.** Requiring a separate Save
+  click for the window's main control invites the mistake of dragging it,
+  closing, and finding nothing changed — which is what happened here. It shows
+  a confirmation once written, since the effect is invisible until a stream
+  starts and silence is indistinguishable from failure.
+
 ## 0.7.1
+
 
 * **Fixed: the text-size slider did nothing.** The one control the settings
   window exists for was a no-op, and the measurement showed it plainly:

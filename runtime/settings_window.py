@@ -464,6 +464,10 @@ class SettingsWindow:
         scale = ttk.Scale(row, from_=0.5, to=3.0, orient="horizontal",
                           variable=self.font_scale_var, command=self._on_scale_move)
         scale.pack(side="left", fill="x", expand=True, padx=8)
+        # Save as soon as the drag ends. Requiring a separate Save click for
+        # the window's main control invites the mistake of dragging it,
+        # closing, and finding nothing changed.
+        scale.bind("<ButtonRelease-1>", self._on_scale_commit)
         self.font_scale_label = ttk.Label(row, text="", width=18)
         self.font_scale_label.pack(side="left")
         ttk.Button(row, text=t("settings.button.reset"), command=self._reset_font_scale).pack(side="left", padx=(8, 0))
@@ -559,6 +563,39 @@ class SettingsWindow:
 
     def _on_scale_move(self, _value=None) -> None:
         self._update_font_scale_label()
+
+    def _on_scale_commit(self, _event=None) -> None:
+        """Write the font size as soon as the drag finishes.
+
+        Saving on release rather than requiring a Save click: this slider is
+        the reason the window gets opened, and a control that appears to do
+        nothing until you press a button elsewhere is a trap. The language
+        drop-down already behaves this way, so this matches it.
+        """
+        try:
+            value = round(float(self.font_scale_var.get()), 2)
+        except (tk.TclError, ValueError):
+            return
+
+        self.cfg["font_scale"] = value
+        try:
+            tray_app.save_config(self.cfg)
+            tray_app.log(f"font scale saved as {value}")
+        except Exception:
+            tray_app.log("could not save the font scale:\n" + traceback.format_exc())
+            return
+
+        # Say so, because the effect is not visible until a stream starts and
+        # silence is indistinguishable from failure.
+        self.font_scale_label.configure(
+            text=t("general.text_label", value=value)
+            + t("general.text_saved"),
+        )
+        if self.on_saved:
+            try:
+                self.on_saved(self.cfg)
+            except Exception:
+                tray_app.log("on_saved callback failed:\n" + traceback.format_exc())
 
     def _update_font_scale_label(self) -> None:
         """Show the multiplier and what it actually produces.

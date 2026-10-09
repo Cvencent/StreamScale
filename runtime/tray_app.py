@@ -40,7 +40,7 @@ t = i18n.t
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.7.1"
+APP_VERSION = "0.7.2"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
