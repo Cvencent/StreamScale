@@ -122,6 +122,14 @@ def main() -> int:
         env["STREAMSCALE_SUNSHINE_LOG"] = str(fake_log)
         env["STREAMSCALE_LOG_DIR"] = str(log_dir)
 
+        # Tell the copy under test that it *is* the installation. Without
+        # this it treats itself as a package opened from elsewhere, compares
+        # against the real install and exits instead of showing a tray.
+        import sys as _sys
+        _sys.path.insert(0, str(HERE))
+        from _testenv import self_install_record
+        self_install_record(tmp, EXE)
+
         print("\n1. Start the EXE")
         kill_exe()
         time.sleep(1.5)

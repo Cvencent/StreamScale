@@ -115,6 +115,13 @@ check("revert 还原了字号", back["settings"].get("font_size") == 1,
 
 print()
 print("=== 4. 无参数仍启动托盘 ===")
+# Tell the copy under test that it *is* the installation, or it treats
+# itself as a package opened from elsewhere and exits without a tray.
+import sys as _sys
+_sys.path.insert(0, str(HERE))
+from _testenv import self_install_record
+self_install_record(tmp, EXE)
+
 proc = subprocess.Popen([str(EXE)], env=env,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(5)

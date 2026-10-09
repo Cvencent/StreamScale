@@ -20,6 +20,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import updater  # noqa: E402
+sys.path.insert(0, str(HERE))
+from _testenv import self_install_record  # noqa: E402
 
 BUILT = HERE / "dist" / "StreamScale"
 failures = []
@@ -76,6 +78,10 @@ installed = tmp / "install" / "StreamScale"
 shutil.copytree(BUILT, installed)
 exe = installed / "StreamScale.exe"
 
+# Tell the copy under test that it *is* the installation. Without this it
+# decides it is a package opened from elsewhere and exits rather than
+# showing a tray.
+self_install_record(tmp, exe)
 proc = subprocess.Popen([str(exe)], env=env,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(6)
