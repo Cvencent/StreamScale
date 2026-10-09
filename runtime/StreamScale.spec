@@ -70,6 +70,15 @@ hiddenimports = [
     "pystray._win32",
     "PIL.Image",
     "PIL.ImageDraw",
+    # Our own modules that are imported lazily or by name. PyInstaller only
+    # follows imports it can see statically, and these are reached from
+    # inside functions (the settings window, the monitors, the translations),
+    # so they have to be named or they are simply missing at runtime.
+    "i18n",
+    "settings_window",
+    "tray_icons",
+    "stream_monitor",
+    "process_watcher",
     # Pulled in lazily by the settings window, the process watcher and the
     # updater. None of these are reachable by static analysis.
     "streamscale.registry",

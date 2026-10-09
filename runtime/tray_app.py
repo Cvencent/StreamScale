@@ -31,11 +31,16 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import traceback
+
+import i18n
+
+t = i18n.t
 from pathlib import Path
 
 APP_NAME = "StreamScale"
-APP_VERSION = "0.6.2"
+APP_VERSION = "0.7.0"
 
 # Suppress console windows for any child process. On non-Windows this is 0,
 # which is a no-op, so the constant is safe to use unconditionally.
@@ -245,6 +250,10 @@ DEFAULT_CONFIG = {
     #              screen, adds visible play area, no cropping or distortion
     #   "stretch"- scale to fill exactly, which distorts the image
     "aspect_fill": "off",
+    # Interface language. Empty means "not chosen yet", in which case the
+    # system language is used -- a better guess than assuming English, and
+    # it keeps the setting honest about whether the user picked one.
+    "language": "",
 }
 
 
@@ -318,7 +327,8 @@ class TrayApp:
 
     def _tooltip(self) -> str:
         import tray_icons
-        text = f"{APP_NAME} - {tray_icons.STATUS_TEXT.get(self._status, self._status)}"
+        # Translated on call: the language can change while running.
+        text = tray_icons.status_text(self._status)
         if self._applied:
             text += " [" + ", ".join(sorted(self._applied)) + "]"
         monitor = self._monitor
@@ -664,6 +674,35 @@ class TrayApp:
         self._monitor.start()
         self._start_watcher()
         self._refresh_icon()
+        self._start_menu_watch()
+
+    def _start_menu_watch(self) -> None:
+        """Rebuild the menu when the language changes.
+
+        The settings window runs on its own thread, so it cannot touch the
+        tray. It leaves a flag instead and this picks it up. Checking once a
+        second costs nothing -- it reads a boolean -- and the alternative,
+        rebuilding the menu from the other thread, risks a race in pystray.
+        """
+
+        def worker():
+            while True:
+                time.sleep(1.0)
+                if not _take_menu_refresh():
+                    continue
+                try:
+                    # Re-read the language before rebuilding, since the
+                    # config is the shared source of truth.
+                    i18n.set_language(i18n.initial_language(load_config()))
+                    if self._icon is not None:
+                        self._icon.menu = self._build_menu()
+                        self._icon.title = self._tooltip()
+                        self._icon.update_menu()
+                    log(f"menu rebuilt for language {i18n.current_language()}")
+                except Exception:
+                    log("menu refresh failed:\n" + traceback.format_exc())
+
+        threading.Thread(target=worker, name="menu-watch", daemon=True).start()
 
     # -- menu actions --------------------------------------------------
 
@@ -734,14 +773,14 @@ class TrayApp:
             return autostart_enabled()
 
         return Menu(
-            Item("Settings...", self._open_settings, default=True),
+            Item(t("tray.menu.settings"), self._open_settings, default=True),
             Menu.SEPARATOR,
-            Item("Start with Windows", self._toggle_autostart,
+            Item(t("tray.menu.autostart"), self._toggle_autostart,
                  checked=autostart_checked),
-            Item("Open config folder", self._open_config_folder),
-            Item("View log", self._open_log),
+            Item(t("tray.menu.open_config"), self._open_config_folder),
+            Item(t("tray.menu.view_log"), self._open_log),
             Menu.SEPARATOR,
-            Item("Quit", self._quit),
+            Item(t("tray.menu.quit"), self._quit),
         )
 
     def run(self) -> None:
@@ -817,10 +856,9 @@ def _notify_upgrade_declined(installed: Path, new_version: str, old_version: str
     try:
         ctypes.windll.user32.MessageBoxW(
             None,
-            f"You are opening {APP_NAME} {new_version}, but {old_version} "
-            f"is already installed.\n\n"
-            f"Nothing was changed.\n\nInstalled at:\n{installed}",
-            f"{APP_NAME} - no upgrade needed", 0x40)
+            t("tray.no_upgrade.body", app=APP_NAME, new=new_version,
+              old=old_version, path=installed),
+            t("tray.no_upgrade.title", app=APP_NAME), 0x40)
     except Exception:
         pass
 
@@ -1018,8 +1056,8 @@ def maybe_self_update() -> int | None:
         try:
             ctypes.windll.user32.MessageBoxW(
                 None,
-                f"{APP_NAME} could not be updated.\n\n{outcome.detail}",
-                f"{APP_NAME} - update failed", 0x10)
+                t("tray.update_failed.body", detail=outcome.detail),
+                t("tray.update_failed.title", app=APP_NAME), 0x10)
         except Exception:
             pass
         return 1
@@ -1046,6 +1084,116 @@ def maybe_self_update() -> int | None:
     else:
         log("the tray was not running before the upgrade; leaving it closed")
     return 0
+
+
+def request_menu_refresh() -> None:
+    """Ask the running tray to rebuild its menu and tooltip.
+
+    The language lives in the config, and the tray builds its menu once at
+    startup, so changing the language from the settings window would leave
+    the menu in the old one until the next restart. The settings window runs
+    on its own thread and cannot touch the tray directly, so it leaves a
+    request here and the tray picks it up.
+
+    A module-level flag rather than a queue: only the latest request matters,
+    and rebuilding twice from one change would be wasteful but harmless.
+    """
+    global _menu_refresh_requested
+    _menu_refresh_requested = True
+
+
+def _take_menu_refresh() -> bool:
+    global _menu_refresh_requested
+    if _menu_refresh_requested:
+        _menu_refresh_requested = False
+        return True
+    return False
+
+
+_menu_refresh_requested = False
+
+
+def _selftest() -> int:
+    """Check that everything the app needs is present, and report.
+
+    Exists because the packaged build imports several modules lazily --
+    tkinter for the settings window, the translations, the log tailer -- and
+    PyInstaller only bundles what it can see statically. A module missing
+    from the bundle therefore fails only when that feature is first used,
+    which is exactly the kind of break that ships unnoticed.
+
+    Writes a report next to the log and prints it, so it is usable both from
+    a terminal and by asking someone to run it.
+
+    Exit code 0 means everything loaded; 1 means something is missing.
+    """
+    import importlib
+
+    checks = [
+        ("tkinter (settings window)", "tkinter"),
+        ("tkinter widgets", "tkinter.ttk"),
+        ("translations", "i18n"),
+        ("settings window", "settings_window"),
+        ("tray icons", "tray_icons"),
+        ("stream monitor", "stream_monitor"),
+        ("process watcher", "process_watcher"),
+        ("self-update", "updater"),
+        ("adapter registry", "streamscale.registry"),
+        ("Brotato adapter", "streamscale.games.brotato"),
+        ("image library", "PIL.Image"),
+        ("tray backend", "pystray._win32"),
+    ]
+
+    lines = [f"{APP_NAME} {APP_VERSION} self-test", "=" * 40]
+    failed = []
+
+    if getattr(sys, "frozen", False):
+        sys.path.insert(0, str(runtime_dir()))
+    sys.path.insert(0, str(bundle_root() / "src"))
+
+    for label, module in checks:
+        try:
+            importlib.import_module(module)
+            lines.append(f"  ok    {label}  ({module})")
+        except Exception as exc:
+            lines.append(f"  FAIL  {label}  ({module}): {exc}")
+            failed.append(module)
+
+    # The translation tables are data, so a missing key would not raise.
+    try:
+        import i18n
+        gaps = i18n.missing_keys()
+        broken = gaps["missing_chinese"] + gaps["missing_english"]
+        if broken:
+            lines.append(f"  FAIL  translations incomplete: {broken[:5]}")
+            failed.append("i18n-keys")
+        else:
+            lines.append(f"  ok    translations  ({len(i18n.ENGLISH)} keys, both languages)")
+        lines.append(f"  ok    language detected: {i18n.current_language()}")
+    except Exception as exc:
+        lines.append(f"  FAIL  translations unusable: {exc}")
+        failed.append("i18n-tables")
+
+    lines.append("")
+    lines.append("result: " + ("FAILED: " + ", ".join(failed) if failed
+                               else "all components present"))
+
+    report = "\n".join(lines)
+    try:
+        path = log_dir() / "selftest.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(report, encoding="utf-8")
+        report += f"\n\nwritten to {path}"
+    except OSError:
+        pass
+
+    log(report)
+    try:
+        sys.stdout.write(report + "\n")
+        sys.stdout.flush()
+    except Exception:
+        pass
+    return 1 if failed else 0
 
 
 def run_cli(argv: list) -> int | None:
@@ -1083,7 +1231,7 @@ def run_cli(argv: list) -> int | None:
     # exiting is what stalls Sunshine's session teardown, and if Sunshine is
     # configured with a verb we do not know, failing loudly is far better
     # than hanging.
-    known = {"apply", "revert", "show"}
+    known = {"apply", "revert", "show", "selftest"}
     raw = argv[1]
     verb = raw.lstrip("-/").lower()
 
@@ -1100,9 +1248,12 @@ def run_cli(argv: list) -> int | None:
         log(f"unrecognised argument {raw!r}; not a valid command")
         sys.stderr.write(
             f"{APP_NAME}: unknown command {raw!r}\n"
-            f"Valid commands: apply, revert, show\n"
+            f"Valid commands: apply, revert, show, selftest\n"
             f"Run with no arguments to start the tray.\n")
         return 2
+
+    if verb == "selftest":
+        return _selftest()
 
     # No dialogs on this path. A modal box blocks until a human clicks it,
     # and Sunshine waits on this process the entire time.
@@ -1159,9 +1310,8 @@ def main() -> int:
         try:
             ctypes.windll.user32.MessageBoxW(
                 None,
-                f"{APP_NAME} is already running.\n\n"
-                "Look for its icon in the notification area.",
-                APP_NAME, 0x40)
+                t("tray.already_running.body", app=APP_NAME),
+                t("tray.already_running.title", app=APP_NAME), 0x40)
         except Exception:
             pass
         return 0
@@ -1173,9 +1323,8 @@ def main() -> int:
         try:
             ctypes.windll.user32.MessageBoxW(
                 None,
-                f"{APP_NAME} failed to start.\n\n"
-                f"See the log for details:\n{log_path()}",
-                APP_NAME, 0x10)
+                t("tray.start_failed.body", app=APP_NAME, path=log_path()),
+                t("tray.update_failed.title", app=APP_NAME), 0x10)
         except Exception:
             pass
         return 1

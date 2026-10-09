@@ -1,6 +1,53 @@
 # Change log
 
+## 0.7.0
+
+* **The interface is available in Chinese and English.** Chosen from
+  Settings, applied immediately, and remembered. Nothing had to be set up:
+  a Chinese Windows shows Chinese on first run, and the drop-down switches
+  back at any time.
+
+  The settings window is rebuilt rather than repainted when the language
+  changes. Tk fixes a widget's text when it is created, so rebuilding is
+  both simpler and less likely to leave a stray untranslated label behind
+  than tracking every widget to update in place. The tab you were on is
+  restored, and the tray menu follows.
+
+  **Log files and command-line output stay English.** They are read while
+  diagnosing something -- usually pasted into a search engine or a bug
+  report -- and translated log lines are harder to search for and harder to
+  match against library documentation. Keeping them in one language also
+  means the same wording appears whichever language the interface is in.
+
+* **Fixed: a broken text-size slider label.** The value shown was the
+  multiplier on its own, which reads as the final size and is not. It now
+  says what it is a multiplier *of*.
+
+* **Fixed: the language could revert when saving.** Saving from any tab
+  writes the whole config, and the language was not among the values being
+  written, so it would have been reset to the default. It is written from
+  both the drop-down and Save now.
+
+* **Added a self-test**, run as `StreamScale.exe selftest`. It confirms
+  every component loads and writes a report beside the log. This exists
+  because the packaged build imports several modules lazily -- tkinter for
+  the settings window, the translations, the log tailer -- and PyInstaller
+  only bundles what it can see statically. A module missing from the bundle
+  therefore fails only when that feature is first used, which is how the
+  missing translations nearly shipped unnoticed.
+
+* Five modules are now named explicitly in the build config for the same
+  reason: they are imported from inside functions, where static analysis
+  cannot follow.
+
+* **The checks no longer interfere with each other.** Each one starts by
+  clearing any tray left behind by an earlier check. Two checks passed alone
+  and failed in a batch, because a surviving instance held the
+  single-instance lock -- a check that only passes in isolation is not much
+  use, so they are now order-independent.
+
 ## 0.6.2
+
 
 * **Fixed: the tray could fail to appear at all.** Every start asks "am I the
   installed build, or a package someone just opened?" An earlier version

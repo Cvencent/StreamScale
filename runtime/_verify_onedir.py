@@ -23,6 +23,24 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import updater  # noqa: E402
 
+
+def _sweep_stale_trays() -> None:
+    """Kill any tray left behind by an earlier check.
+
+    Checks share the machine, so a surviving instance holds the
+    single-instance lock and tails the real log. Sweeping before starting
+    makes each check independent of the order it runs in.
+    """
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", "StreamScale.exe"],
+                       capture_output=True, text=True,
+                       encoding="gbk", errors="replace", timeout=20,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    time.sleep(1.0)
+
+
 FOLDER = HERE / "dist" / "StreamScale"
 EXE = FOLDER / "StreamScale.exe"
 
@@ -121,6 +139,8 @@ import sys as _sys
 _sys.path.insert(0, str(HERE))
 from _testenv import self_install_record
 self_install_record(tmp, EXE)
+
+_sweep_stale_trays()
 
 proc = subprocess.Popen([str(EXE)], env=env,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

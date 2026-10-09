@@ -25,6 +25,24 @@ import tempfile
 import time
 from pathlib import Path
 
+
+def _sweep_stale_trays() -> None:
+    """Kill any tray left behind by an earlier check.
+
+    Checks share the machine, so a surviving instance holds the
+    single-instance lock and tails the real log. Sweeping before starting
+    makes each check independent of the order it runs in.
+    """
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", "StreamScale.exe"],
+                       capture_output=True, text=True,
+                       encoding="gbk", errors="replace", timeout=20,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    time.sleep(1.0)
+
+
 HERE = Path(__file__).resolve().parent
 def _locate_exe() -> Path:
     """Find the built StreamScale.exe, whatever layout it was built in.
@@ -133,6 +151,7 @@ def main() -> int:
         print("\n1. Start the EXE")
         kill_exe()
         time.sleep(1.5)
+        _sweep_stale_trays()
         proc = subprocess.Popen([str(EXE)], cwd=str(EXE.parent), env=env,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.time() + 45

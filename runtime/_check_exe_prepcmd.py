@@ -40,6 +40,24 @@ sys.path.insert(0, str(HERE))
 
 import updater  # noqa: E402
 
+
+def _sweep_stale_trays() -> None:
+    """Kill any tray left behind by an earlier check.
+
+    Checks share the machine, so a surviving instance holds the
+    single-instance lock and tails the real log. Sweeping before starting
+    makes each check independent of the order it runs in.
+    """
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", "StreamScale.exe"],
+                       capture_output=True, text=True,
+                       encoding="gbk", errors="replace", timeout=20,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    time.sleep(1.0)
+
+
 failures = []
 
 
@@ -80,6 +98,23 @@ def run(exe: Path, args, env, timeout=45):
         return proc.returncode, time.time() - start
     except subprocess.TimeoutExpired:
         return None, time.time() - start
+
+
+def _sweep_processes() -> None:
+    """Kill any StreamScale process still running.
+
+    Used between checks so a leftover tray cannot hold the single-instance
+    lock and make a later check fail for the wrong reason. Silent when there
+    is nothing to kill, which is the normal case.
+    """
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", EXE.name],
+                       capture_output=True, text=True,
+                       encoding="gbk", errors="replace", timeout=20,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    time.sleep(1.0)
 
 
 def main() -> int:
@@ -168,6 +203,7 @@ def main() -> int:
     check("show left the file untouched", settings.read_bytes() == before)
 
     print("\n6. A bare launch starts the tray and keeps running")
+    _sweep_stale_trays()
     proc = subprocess.Popen([str(EXE)], env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(6)
@@ -179,6 +215,12 @@ def main() -> int:
             proc.wait(timeout=8)
         except Exception:
             proc.kill()
+
+    # Sweep up by name as well. Terminating the handle we hold is not enough:
+    # the launcher may have spawned a child under the same name, and a
+    # surviving tray holds the single-instance lock -- which makes the next
+    # check in a batch run fail for a reason unrelated to what it tests.
+    _sweep_processes()
 
     print()
     if failures:

@@ -29,6 +29,10 @@ from typing import Callable, Dict, List, Optional
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import i18n
+
+t = i18n.t
+
 
 def _supports_cli(exe: Path) -> bool:
     """Does this executable understand `apply` / `revert`?
@@ -102,9 +106,29 @@ class SettingsWindow:
         self.on_saved = on_saved
         self.cfg = tray_app.load_config()
 
-        root.title(f"{tray_app.APP_NAME} Settings")
-        root.geometry("640x520")
-        root.minsize(560, 460)
+        # Apply the stored language before any widget is built, so the first
+        # thing drawn is already in the right language rather than English
+        # for a frame and then redrawn.
+        i18n.set_language(i18n.initial_language(self.cfg))
+        self._remembered_tab = 0
+
+        self._build_window()
+
+    def _build_window(self) -> None:
+        """Lay the whole window out from scratch.
+
+        Called once at startup and again whenever the language changes. Tk
+        fixes a widget's text when it is created, so switching language means
+        rebuilding rather than repainting -- and rebuilding is cheaper to get
+        right than tracking every label to update in place.
+        """
+        root = self.root
+        for child in root.winfo_children():
+            child.destroy()
+
+        root.title(t("settings.title", app=tray_app.APP_NAME))
+        root.geometry("640x560")
+        root.minsize(560, 480)
 
         style = ttk.Style(root)
         try:
@@ -120,12 +144,56 @@ class SettingsWindow:
         self._build_overrides_tab()
         self._build_status_tab()
 
+        # Same tab as before the rebuild, so changing the language does not
+        # send the user back to the first one.
+        try:
+            self.notebook.select(self._remembered_tab)
+        except tk.TclError:
+            pass
+
         bar = ttk.Frame(root)
         bar.pack(fill="x", padx=PAD, pady=PAD)
-        ttk.Button(bar, text="Close", command=self.close).pack(side="right")
-        ttk.Button(bar, text="Save", command=self.save).pack(side="right", padx=(0, 6))
+        ttk.Button(bar, text=t("settings.button.close"),
+                   command=self.close).pack(side="right")
+        ttk.Button(bar, text=t("settings.button.save"),
+                   command=self.save).pack(side="right", padx=(0, 6))
 
         root.protocol("WM_DELETE_WINDOW", self.close)
+
+    def _on_language_change(self, _value=None) -> None:
+        """Switch language and redraw.
+
+        The choice is written to the config immediately rather than waiting
+        for Save: the window is about to be rebuilt, and a rebuild that lost
+        the choice would look like the drop-down did nothing.
+        """
+        code = self.language_var.get()
+        chosen = None
+        for candidate, label in i18n.available_languages():
+            if label == code:
+                chosen = candidate
+                break
+        if chosen is None:
+            return
+
+        try:
+            self._remembered_tab = self.notebook.index(self.notebook.select())
+        except (tk.TclError, AttributeError):
+            self._remembered_tab = 0
+
+        i18n.set_language(chosen)
+        self.cfg["language"] = chosen
+        try:
+            tray_app.save_config(self.cfg)
+        except Exception:
+            tray_app.log("could not persist language:\n" + traceback.format_exc())
+
+        self._build_window()
+        # The tray's own menu is built once, so tell it to re-read.
+        try:
+            tray_app.request_menu_refresh()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Tab 1: install
@@ -133,50 +201,47 @@ class SettingsWindow:
 
     def _build_install_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=PAD)
-        self.notebook.add(tab, text="Install")
+        self.notebook.add(tab, text=t("settings.tab.install"))
 
         ttk.Label(
             tab,
-            text="Add the press commands to Sunshine",
+            text=t("install.heading"),
             font=("Segoe UI", 12, "bold"),
         ).pack(anchor="w")
 
         ttk.Label(
             tab,
-            text=(
-                "Sunshine runs a command when a stream starts and another when it\n"
-                "ends. Adding those here is what makes scaling automatic."
-            ),
+            text=t("install.intro"),
             justify="left",
             foreground="#555555",
         ).pack(anchor="w", pady=(4, 12))
 
         path_row = ttk.Frame(tab)
         path_row.pack(fill="x")
-        ttk.Label(path_row, text="apps.json:").pack(side="left")
+        ttk.Label(path_row, text=t("install.apps_json")).pack(side="left")
         self.apps_path_var = tk.StringVar()
         entry = ttk.Entry(path_row, textvariable=self.apps_path_var, state="readonly")
         entry.pack(side="left", fill="x", expand=True, padx=6)
-        ttk.Button(path_row, text="Browse...", command=self._browse_apps).pack(side="left")
+        ttk.Button(path_row, text=t("settings.button.browse"), command=self._browse_apps).pack(side="left")
 
         if sunshine_config.find_apps_json():
             self.apps_path_var.set(str(sunshine_config.find_apps_json()))
         else:
             self.apps_path_var.set("(not found - use Browse)")
 
-        pick = ttk.LabelFrame(tab, text="Which apps", padding=PAD)
+        pick = ttk.LabelFrame(tab, text=t("install.which_apps"), padding=PAD)
         pick.pack(fill="both", expand=True, pady=12)
 
         self.install_all_var = tk.BooleanVar(value=True)
         ttk.Radiobutton(
-            pick, text="All apps", variable=self.install_all_var,
+            pick, text=t("install.all_apps"), variable=self.install_all_var,
             value=True, command=self._refresh_app_list,
         ).pack(anchor="w")
 
         row = ttk.Frame(pick)
         row.pack(anchor="w", fill="x")
         ttk.Radiobutton(
-            row, text="Only these:", variable=self.install_all_var,
+            row, text=t("install.only_these"), variable=self.install_all_var,
             value=False, command=self._refresh_app_list,
         ).pack(side="left")
 
@@ -189,9 +254,9 @@ class SettingsWindow:
 
         buttons = ttk.Frame(tab)
         buttons.pack(fill="x")
-        ttk.Button(buttons, text="Install", command=self._install).pack(side="left")
-        ttk.Button(buttons, text="Remove", command=self._uninstall).pack(side="left", padx=6)
-        ttk.Button(buttons, text="Refresh", command=self._refresh_app_list).pack(side="left")
+        ttk.Button(buttons, text=t("settings.tab.install"), command=self._install).pack(side="left")
+        ttk.Button(buttons, text=t("settings.button.remove"), command=self._uninstall).pack(side="left", padx=6)
+        ttk.Button(buttons, text=t("settings.button.refresh"), command=self._refresh_app_list).pack(side="left")
 
         self.install_status = ttk.Label(tab, text="", foreground="#0A6E0A")
         self.install_status.pack(anchor="w", pady=(8, 0))
@@ -275,14 +340,14 @@ class SettingsWindow:
     def _install(self) -> None:
         path = self._current_apps_path()
         if path is None:
-            messagebox.showerror(tray_app.APP_NAME, "Select a valid apps.json first.")
+            messagebox.showerror(tray_app.APP_NAME, t("msg.bad_apps_json"))
             return
 
         apps = None
         if not self.install_all_var.get():
             apps = [self.app_list.get(i) for i in self.app_list.curselection()]
             if not apps:
-                messagebox.showinfo(tray_app.APP_NAME, "Select at least one app.")
+                messagebox.showinfo(tray_app.APP_NAME, t("msg.pick_one_app"))
                 return
 
         apply_cmd, revert_cmd = self._prep_commands()
@@ -297,22 +362,21 @@ class SettingsWindow:
         try:
             count, names = sunshine_config.install_prep(path, apply_cmd, revert_cmd, apps)
         except Exception as exc:
-            messagebox.showerror(tray_app.APP_NAME, f"Install failed:\n{exc}")
+            messagebox.showerror(tray_app.APP_NAME,
+                                 t("msg.install_failed", detail=exc))
             tray_app.log("install failed:\n" + traceback.format_exc())
             return
 
         if count == 0:
             self.install_status.configure(
-                text="Already installed - nothing to change.", foreground="#555555")
+                text=t("msg.already_installed"), foreground="#555555")
         else:
             self.install_status.configure(
                 text=f"Installed on {count} app(s): {', '.join(names)}",
                 foreground="#0A6E0A")
         messagebox.showinfo(
             tray_app.APP_NAME,
-            f"Done. {count} app(s) updated.\n\n"
-            f"A backup was saved next to apps.json.\n"
-            f"Restart Sunshine for the change to take effect.",
+            t("msg.installed_ok", count=count),
         )
 
     def _uninstall(self) -> None:
@@ -326,7 +390,7 @@ class SettingsWindow:
             messagebox.showerror(tray_app.APP_NAME, f"Remove failed:\n{exc}")
             return
         self.install_status.configure(
-            text=f"Removed from {count} app(s)." if count else "Nothing to remove.",
+            text=t("msg.removed_ok", count=count) if count else t("install.status_absent"),
             foreground="#555555")
 
     # ------------------------------------------------------------------
@@ -335,59 +399,86 @@ class SettingsWindow:
 
     def _build_general_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=PAD)
-        self.notebook.add(tab, text="General")
+        self.notebook.add(tab, text=t("settings.tab.general"))
+
+        # Language first: it is the control someone reaches for when the
+        # interface is in a language they cannot read, so it should not be
+        # buried under options described in that language.
+        lang_row = ttk.LabelFrame(tab, text=t("general.language"), padding=PAD)
+        lang_row.pack(fill="x", pady=(0, 12))
+
+        current = i18n.current_language()
+        current_label = next(
+            (label for code, label in i18n.available_languages() if code == current),
+            i18n.available_languages()[0][1],
+        )
+        self.language_var = tk.StringVar(value=current_label)
+        combo = ttk.Combobox(
+            lang_row,
+            textvariable=self.language_var,
+            state="readonly",
+            width=16,
+            values=[label for _code, label in i18n.available_languages()],
+        )
+        combo.pack(anchor="w")
+        combo.bind("<<ComboboxSelected>>", self._on_language_change)
+
+        ttk.Label(
+            lang_row,
+            text=t("general.language_note"),
+            foreground="#555555",
+        ).pack(anchor="w", pady=(6, 0))
 
         self.enabled_var = tk.BooleanVar(value=bool(self.cfg.get("enabled", True)))
         ttk.Checkbutton(
-            tab, text="Enable scaling", variable=self.enabled_var,
+            tab, text=t("general.enable"), variable=self.enabled_var,
         ).pack(anchor="w")
 
         ttk.Label(
             tab,
-            text="Turn this off to leave every game untouched.",
+            text=t("general.enable_note"),
             foreground="#555555",
         ).pack(anchor="w", pady=(0, 12))
 
-        print_row = ttk.LabelFrame(tab, text="Text size", padding=PAD)
+        print_row = ttk.LabelFrame(tab, text=t("general.text_title"), padding=PAD)
         print_row.pack(fill="x", pady=(0, 12))
 
         ttk.Label(
             print_row,
-            text="The automatic size cannot see how large your screen physically is.",
+            text=t("general.text_note"),
             foreground="#555555",
         ).pack(anchor="w")
         ttk.Label(
             print_row,
-            text="If the text is still too small, raise this.",
+            text=t("general.text_hint"),
             foreground="#555555",
         ).pack(anchor="w", pady=(0, 8))
 
         row = ttk.Frame(print_row)
         row.pack(fill="x")
-        ttk.Label(row, text="Makes text").pack(side="left")
+        ttk.Label(row, text=t("general.text_makes")).pack(side="left")
         self.font_scale_var = tk.DoubleVar(value=float(self.cfg.get("font_scale", 1.0)))
         scale = ttk.Scale(row, from_=0.5, to=2.5, orient="horizontal",
                           variable=self.font_scale_var, command=self._on_scale_move)
         scale.pack(side="left", fill="x", expand=True, padx=8)
         self.font_scale_label = ttk.Label(row, text="", width=18)
         self.font_scale_label.pack(side="left")
-        ttk.Button(row, text="Reset", command=self._reset_font_scale).pack(side="left", padx=(8, 0))
+        ttk.Button(row, text=t("settings.button.reset"), command=self._reset_font_scale).pack(side="left", padx=(8, 0))
 
         self._update_font_scale_label()
 
         ttk.Label(
             print_row,
-            text="1.0× = automatic. Applies the next time a stream starts.",
+            text=t("general.text_auto"),
             foreground="#555555",
         ).pack(anchor="w", pady=(6, 0))
 
-        screen_row = ttk.LabelFrame(tab, text="Screen fill", padding=PAD)
+        screen_row = ttk.LabelFrame(tab, text=t("general.fill_title"), padding=PAD)
         screen_row.pack(fill="x", pady=(0, 12))
 
         ttk.Label(
             screen_row,
-            text="Most games are laid out for a 16:9 screen, so on a 4:3\n"
-                 "handheld they leave black bars above and below.",
+            text=t("general.fill_note"),
             justify="left",
             foreground="#555555",
         ).pack(anchor="w", pady=(0, 8))
@@ -409,7 +500,7 @@ class SettingsWindow:
 
         ttk.Label(
             screen_row,
-            text="Works on Godot games (Brotato). Other games are left alone.",
+            text=t("general.fill_scope"),
             foreground="#555555",
         ).pack(anchor="w", pady=(6, 0))
 
@@ -417,32 +508,30 @@ class SettingsWindow:
         pre_row.pack(fill="x", pady=(0, 12))
         self.preapply_var = tk.BooleanVar(value=bool(self.cfg.get("preapply", True)))
         ttk.Checkbutton(
-            pre_row, text="Apply at stream start (recommended)", variable=self.preapply_var,
+            pre_row, text=t("general.preapply"), variable=self.preapply_var,
         ).pack(anchor="w")
         ttk.Label(
             pre_row,
-            text="Needed for games launched from Steam, where the game starts\n"
-                 "after the stream does. Turn it off only if you do not want\n"
-                 "config files touched until a game actually launches.",
+            text=t("general.preapply_note"),
             justify="left",
             foreground="#555555",
         ).pack(anchor="w", pady=(2, 0))
 
         row = ttk.Frame(tab)
         row.pack(fill="x")
-        ttk.Label(row, text="Skip clients wider than:").pack(side="left")
+        ttk.Label(row, text=t("general.width")).pack(side="left")
         self.width_var = tk.StringVar(value=str(self.cfg.get("max_client_width", 1600)))
         ttk.Spinbox(row, from_=640, to=7680, increment=160, width=8,
                     textvariable=self.width_var).pack(side="left", padx=6)
-        ttk.Label(row, text="px").pack(side="left")
+        ttk.Label(row, text=t("general.width_unit")).pack(side="left")
 
         ttk.Label(
             tab,
-            text="A 4K TV is comfortable already, so it is skipped by default.",
+            text=t("general.width_note"),
             foreground="#555555",
         ).pack(anchor="w", pady=(2, 12))
 
-        ttk.Label(tab, text="Never touch these apps:").pack(anchor="w")
+        ttk.Label(tab, text=t("general.excluded")).pack(anchor="w")
         box = ttk.Frame(tab)
         box.pack(fill="both", expand=True, pady=(4, 0))
         self.excluded_list = tk.Listbox(box, height=6, exportselection=False)
@@ -460,8 +549,9 @@ class SettingsWindow:
         entry = ttk.Entry(add_row, textvariable=self.new_excluded)
         entry.pack(side="left", fill="x", expand=True)
         entry.bind("<Return>", lambda _e: self._add_excluded())
-        ttk.Button(add_row, text="Add", command=self._add_excluded).pack(side="left", padx=6)
-        ttk.Button(add_row, text="Remove selected",
+        ttk.Button(add_row, text=t("general.excluded_add"),
+                   command=self._add_excluded).pack(side="left", padx=6)
+        ttk.Button(add_row, text=t("general.excluded_remove"),
                    command=self._remove_excluded).pack(side="left")
 
     def _on_scale_move(self, _value=None) -> None:
@@ -504,20 +594,16 @@ class SettingsWindow:
 
     def _build_overrides_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=PAD)
-        self.notebook.add(tab, text="Overrides")
+        self.notebook.add(tab, text=t("settings.tab.overrides"))
 
         ttk.Label(
             tab,
-            text="Pin an exact value for a specific client",
+            text=t("overrides.heading"),
             font=("Segoe UI", 11, "bold"),
         ).pack(anchor="w")
         ttk.Label(
             tab,
-            text=(
-                "By default the scale is picked from the client's resolution.\n"
-                "That cannot see how large the screen physically is, so use this\n"
-                "when the automatic value looks wrong."
-            ),
+            text=t("overrides.intro"),
             justify="left",
             foreground="#555555",
         ).pack(anchor="w", pady=(2, 12))
@@ -525,27 +611,27 @@ class SettingsWindow:
         form = ttk.Frame(tab)
         form.pack(fill="x")
 
-        ttk.Label(form, text="Client name").grid(row=0, column=0, sticky="w", pady=3)
+        ttk.Label(form, text=t("overrides.client")).grid(row=0, column=0, sticky="w", pady=3)
         self.override_client = tk.StringVar()
         ttk.Entry(form, textvariable=self.override_client, width=22).grid(
             row=0, column=1, sticky="w", padx=6)
 
-        ttk.Label(form, text="Key").grid(row=1, column=0, sticky="w", pady=3)
+        ttk.Label(form, text=t("overrides.key")).grid(row=1, column=0, sticky="w", pady=3)
         self.override_key = tk.StringVar(value="brotato_font_size")
         ttk.Combobox(
             form, textvariable=self.override_key, width=20,
             values=["brotato_font_size"],
         ).grid(row=1, column=1, sticky="w", padx=6)
 
-        ttk.Label(form, text="Value").grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Label(form, text=t("overrides.value")).grid(row=2, column=0, sticky="w", pady=3)
         self.override_value = tk.StringVar(value="2.0")
         ttk.Entry(form, textvariable=self.override_value, width=22).grid(
             row=2, column=1, sticky="w", padx=6)
 
-        ttk.Button(form, text="Add / update", command=self._add_override).grid(
+        ttk.Button(form, text=t("overrides.add"), command=self._add_override).grid(
             row=3, column=1, sticky="w", padx=6, pady=(8, 0))
 
-        ttk.Label(tab, text="Current overrides:").pack(anchor="w", pady=(14, 0))
+        ttk.Label(tab, text=t("overrides.current")).pack(anchor="w", pady=(14, 0))
         box = ttk.Frame(tab)
         box.pack(fill="both", expand=True, pady=(4, 0))
         self.override_list = tk.Listbox(box, height=6, exportselection=False)
@@ -554,7 +640,7 @@ class SettingsWindow:
         scroll.pack(side="left", fill="y")
         self.override_list.configure(yscrollcommand=scroll.set)
 
-        ttk.Button(tab, text="Remove selected",
+        ttk.Button(tab, text=t("overrides.remove"),
                    command=self._remove_override).pack(anchor="w", pady=(6, 0))
         self._refresh_overrides()
 
@@ -570,12 +656,12 @@ class SettingsWindow:
         key = self.override_key.get().strip()
         raw = self.override_value.get().strip()
         if not client or not key:
-            messagebox.showinfo(tray_app.APP_NAME, "Client name and key are both required.")
+            messagebox.showinfo(tray_app.APP_NAME, t("overrides.need_name"))
             return
         try:
             value = float(raw)
         except ValueError:
-            messagebox.showerror(tray_app.APP_NAME, f"'{raw}' is not a number.")
+            messagebox.showerror(tray_app.APP_NAME, t("overrides.not_number", value=raw))
             return
 
         clients = dict(self.cfg.get("clients") or {})
@@ -611,7 +697,7 @@ class SettingsWindow:
 
     def _build_status_tab(self) -> None:
         tab = ttk.Frame(self.notebook, padding=PAD)
-        self.notebook.add(tab, text="Status")
+        self.notebook.add(tab, text=t("settings.tab.status"))
 
         text = tk.Text(tab, height=18, wrap="word", relief="flat",
                        background="#FAFAFA", font=("Consolas", 9))
@@ -661,10 +747,10 @@ class SettingsWindow:
 
         row = ttk.Frame(tab)
         row.pack(fill="x", pady=(8, 0))
-        ttk.Button(row, text="Open log",
+        ttk.Button(row, text=t("status.open_log"),
                    command=lambda: self._open_path(tray_app.log_path())).pack(side="left")
         ttk.Button(
-            row, text="Open config folder",
+            row, text=t("status.open_config"),
             command=lambda: self._open_path(tray_app.config_dir()),
         ).pack(side="left", padx=6)
 
@@ -686,7 +772,7 @@ class SettingsWindow:
         try:
             width = int(self.width_var.get())
         except ValueError:
-            messagebox.showerror(tray_app.APP_NAME, "Width must be a number.")
+            messagebox.showerror(tray_app.APP_NAME, t("msg.width_not_number"))
             return
 
         self.cfg["enabled"] = bool(self.enabled_var.get())
@@ -702,7 +788,8 @@ class SettingsWindow:
         try:
             path = tray_app.save_config(self.cfg)
         except Exception as exc:
-            messagebox.showerror(tray_app.APP_NAME, f"Could not save:\n{exc}")
+            messagebox.showerror(tray_app.APP_NAME,
+                                 t("msg.save_failed", detail=exc))
             tray_app.log("save failed:\n" + traceback.format_exc())
             return
 
@@ -712,7 +799,7 @@ class SettingsWindow:
                 self.on_saved(self.cfg)
             except Exception:
                 tray_app.log("on_saved callback failed:\n" + traceback.format_exc())
-        messagebox.showinfo(tray_app.APP_NAME, f"Saved to\n{path}")
+        messagebox.showinfo(tray_app.APP_NAME, t("msg.saved_to", path=path))
 
     def alive(self) -> bool:
         try:

@@ -23,6 +23,24 @@ import updater  # noqa: E402
 sys.path.insert(0, str(HERE))
 from _testenv import self_install_record  # noqa: E402
 
+
+def _sweep_stale_trays() -> None:
+    """Kill any tray left behind by an earlier check.
+
+    Checks share the machine, so a surviving instance holds the
+    single-instance lock and tails the real log. Sweeping before starting
+    makes each check independent of the order it runs in.
+    """
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", "StreamScale.exe"],
+                       capture_output=True, text=True,
+                       encoding="gbk", errors="replace", timeout=20,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    time.sleep(1.0)
+
+
 BUILT = HERE / "dist" / "StreamScale"
 failures = []
 
@@ -82,6 +100,7 @@ exe = installed / "StreamScale.exe"
 # decides it is a package opened from elsewhere and exits rather than
 # showing a tray.
 self_install_record(tmp, exe)
+_sweep_stale_trays()
 proc = subprocess.Popen([str(exe)], env=env,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 time.sleep(6)

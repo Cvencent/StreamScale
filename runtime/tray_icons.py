@@ -25,6 +25,10 @@ COLORS: Dict[str, str] = {
 }
 
 # Human-readable descriptions, used in the tooltip and the settings window.
+# Short state words, shown in the tooltip and, for "idle"/"disabled", the
+# only text a user sees without opening anything. Kept as keys rather than
+# finished sentences so the tray can translate them: the tooltip is read at a
+# glance, so it has to be in the same language as the menu beside it.
 STATUS_TEXT: Dict[str, str] = {
     "idle":     "Idle - waiting for a stream",
     "active":   "Streaming - scaling applied",
@@ -32,6 +36,30 @@ STATUS_TEXT: Dict[str, str] = {
     "error":    "Error - see the log",
     "disabled": "Disabled in settings",
 }
+
+# Translation keys for the same states. A missing entry falls back to the
+# English text above, so a new state cannot leave an empty tooltip.
+STATUS_KEYS: Dict[str, str] = {
+    "idle":     "tray.tooltip.idle",
+    "active":   "tray.tooltip.active",
+    "restored": "tray.tooltip.reverted",
+    "error":    "tray.tooltip.error",
+    "disabled": "tray.tooltip.disabled",
+}
+
+
+def status_text(status: str) -> str:
+    """The translated description of a tray state.
+
+    Translated on call rather than at import, because the language is chosen
+    from Settings and can change while the tray is running.
+    """
+    import i18n
+
+    key = STATUS_KEYS.get(status)
+    if key:
+        return i18n.t(key)
+    return STATUS_TEXT.get(status, status)
 
 
 def make_tray_image(status: str, size: int = 64):

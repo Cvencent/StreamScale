@@ -54,6 +54,24 @@ user32 = ctypes.windll.user32
 # pystray's Win32 backend names its window class "<something>SystemTrayIcon".
 TRAY_CLASS_HINT = "SystemTrayIcon"
 
+
+def _sweep_stale_trays() -> None:
+    """Kill any tray left behind by an earlier check.
+
+    Checks share the machine, so a surviving instance holds the
+    single-instance lock and tails the real log. Sweeping before starting
+    makes each check independent of the order it runs in -- two checks that
+    pass alone failed together until this existed.
+    """
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", "StreamScale.exe"],
+                       capture_output=True, text=True,
+                       encoding="gbk", errors="replace", timeout=20,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    time.sleep(1.0)
+
 WNDENUMPROC = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
 
 
@@ -114,6 +132,7 @@ def main() -> int:
     env = isolated_env(tmp)
     self_install_record(tmp, EXE)
 
+    _sweep_stale_trays()
     proc = subprocess.Popen(
         [str(EXE)],
         cwd=str(EXE.parent),

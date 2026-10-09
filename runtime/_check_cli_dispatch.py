@@ -129,7 +129,8 @@ def main() -> int:
                             (["revert"], "revert is a command"),
                             (["show"], "show is a command"),
                             (["--help"], "--help is handled"),
-                            (["-h"], "-h is handled")):
+                            (["-h"], "-h is handled"),
+                            (["selftest"], "selftest is a command")):
             result = run_cli(args, logs)
             if result.startswith("NO-RESULT"):
                 # Acceptable only when the child exited cleanly.
